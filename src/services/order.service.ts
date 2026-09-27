@@ -2,6 +2,7 @@ import { Order, IOrder, PlanStatus } from '../models/Order.model.js';
 import { OrderDate, IOrderDate } from '../models/OrderDate.model.js';
 import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
 import { StatusEngineService } from './status-engine.service.js';
+import { escapeRegex } from '../utils/sanitize.js';
 
 export interface IPaginatedOrdersResult {
   orders: any[];
@@ -80,9 +81,10 @@ export class OrderService {
     }
 
     if (search && search.trim()) {
+      const safeSearch = escapeRegex(search.trim());
       filter.$or = [
-        { orderNo: { $regex: search.trim(), $options: 'i' } },
-        { buyer: { $regex: search.trim(), $options: 'i' } },
+        { orderNo: { $regex: safeSearch, $options: 'i' } },
+        { buyer: { $regex: safeSearch, $options: 'i' } },
       ];
     }
 
@@ -175,9 +177,10 @@ export class OrderService {
 
     // Filter by search query
     if (search && search.trim()) {
+      const safeSearch = escapeRegex(search.trim());
       filter.orderNo = exact
-        ? { $regex: `^${search.trim()}$`, $options: 'i' }
-        : { $regex: search.trim(), $options: 'i' };
+        ? { $regex: `^${safeSearch}$`, $options: 'i' }
+        : { $regex: safeSearch, $options: 'i' };
     }
 
     // Projection
@@ -399,9 +402,9 @@ export class OrderService {
       orderFilter.orderNo = { $in: deptValid.validOrderNos };
     }
 
-    if (buyer) orderFilter.buyer = { $regex: buyer, $options: 'i' };
+    if (buyer) orderFilter.buyer = { $regex: escapeRegex(buyer), $options: 'i' };
     if (search && search.trim()) {
-      const escaped = String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escaped = escapeRegex(String(search).trim());
       const pattern = exact === 'true' ? `^${escaped}$` : escaped;
       const searchRegex = new RegExp(pattern, 'i');
 
@@ -464,7 +467,7 @@ export class OrderService {
     let orphanedOrderInfos: any[] = [];
     if (orphanedOrderNos.length > 0) {
       const orphanOrderFilter: Record<string, any> = { orderNo: { $in: orphanedOrderNos } };
-      if (buyer) orphanOrderFilter.buyer = { $regex: buyer, $options: 'i' };
+      if (buyer) orphanOrderFilter.buyer = { $regex: escapeRegex(buyer), $options: 'i' };
 
       if (allowedRawBuyers) {
         if (orphanOrderFilter.buyer) {

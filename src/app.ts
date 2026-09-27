@@ -9,6 +9,7 @@ import dropdownRoutes from './routes/dropdown.routes.js';
 import orderRoutes from './routes/order.routes.js';
 import { UploadController } from './controllers/upload.controller.js';
 import { authenticateToken } from './middleware/auth.middleware.js';
+import { apiLimiter } from './middleware/rate-limit.middleware.js';
 
 const app = express();
 
@@ -28,7 +29,7 @@ app.use(
       ) {
         return callback(null, true);
       }
-      return callback(null, true);
+      return callback(new Error('Blocked by CORS policy: Origin not allowed.'));
     },
     credentials: true,
   })
@@ -47,6 +48,9 @@ app.get('/', (req: Request, res: Response) => {
 
 // Legacy GridFS File Serving Route
 app.get('/uploads/:filename', authenticateToken, UploadController.downloadFile);
+
+// Rate limit general API routes against scraping & denial-of-service
+app.use('/api', apiLimiter);
 
 // Connect Routes
 app.use('/api/auth', authRoutes);
