@@ -158,12 +158,14 @@ export class OrderController {
   static async downloadTrackingExcel(req: Request, res: Response): Promise<void> {
     try {
       const dept = String(req.params.dept);
+      const status = req.query.status ? String(req.query.status) : 'Pending';
       const buffer = await ReportExportService.generateTrackingReport(dept, req.allowedRawBuyers, {
         buyer: req.query.buyer ? String(req.query.buyer) : undefined,
         search: req.query.search ? String(req.query.search) : undefined,
+        status,
       });
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="${dept}-tracking-${Date.now()}.xlsx"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${dept}-${status}-tracking-${Date.now()}.xlsx"`);
       res.send(buffer);
     } catch (err: any) {
       res.status(500).json({ message: 'Failed to export tracking Excel.' });

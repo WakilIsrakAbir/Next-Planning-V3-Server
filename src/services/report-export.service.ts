@@ -74,10 +74,12 @@ export class ReportExportService {
   static async generateTrackingReport(
     dept: string,
     allowedRawBuyers?: string[],
-    filters?: { buyer?: string; search?: string }
+    filters?: { buyer?: string; search?: string; status?: string }
   ): Promise<Buffer> {
     const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
     const statusField = `${dbDept}PlanStatus`;
+    const actualKey = (dept === 'deliveryfloor' ? 'delivery' : dept) + 'Actual';
+    const status = filters?.status || 'Pending';
 
     const filter: Record<string, any> = { [statusField]: 'Confirm' };
 
@@ -98,48 +100,78 @@ export class ReportExportService {
     planDocs.forEach((p) => planMap.set(p.orderNo, p));
 
     const exportRows: any[] = [];
+    const todayVal = new Date().setHours(0, 0, 0, 0);
 
+    const calcResult = (actualDate?: string, planDate?: string) => {
+      const hasActual = actualDate && actualDate.trim() !== '' && actualDate !== '-';
+      const hasPlan = planDate && planDate.trim() !== '' && planDate !== '-';
+      if (hasActual) {
+        if (!hasPlan) return '—';
+        return new Date(actualDate).setHours(0, 0, 0, 0) <= new Date(planDate).setHours(0, 0, 0, 0) ? 'Pass' : 'Fail';
+      }
+      if (hasPlan) {
+        if (new Date(planDate).setHours(0, 0, 0, 0) < todayVal) {
+          return 'Fail';
+        }
+      }
+      return '—';
+    };
+
+    let sl = 1;
     confirmedOrders.forEach((ord) => {
       const plan = planMap.get(ord.orderNo);
-      const actualKey = `${dept}Actual`;
       const actual = plan ? plan[actualKey] || {} : {};
       const deptPlanItems = plan ? plan[dbDept] || [] : [];
 
       let planStart = '';
       let planEnd = '';
       if (Array.isArray(deptPlanItems) && deptPlanItems.length > 0) {
-        planStart = deptPlanItems[0].planStart || '';
-        planEnd = deptPlanItems[0].planEnd || '';
-      }
-
-      let leadDays = '—';
-      if (planEnd && actual.actualEnd) {
-        const pDate = new Date(planEnd);
-        const aDate = new Date(actual.actualEnd);
-        if (!isNaN(pDate.getTime()) && !isNaN(aDate.getTime())) {
-          const diff = Math.round((aDate.getTime() - pDate.getTime()) / (1000 * 60 * 60 * 24));
-          leadDays = diff > 0 ? `+${diff}` : String(diff);
+        if (dept === 'deliveryfloor') {
+          const floorItems = deptPlanItems.filter(
+            (i: any) => i.floorPlanType === 'Confirm' || i.floorPlanType === 'Tentative'
+          );
+          const starts = floorItems.map((i: any) => i.floorStartDate).filter(Boolean).sort();
+          const ends = floorItems.map((i: any) => i.floorEndDate).filter(Boolean).sort();
+          if (starts.length) planStart = starts[0];
+          if (ends.length) planEnd = ends[ends.length - 1];
+        } else {
+          const starts = deptPlanItems.map((i: any) => i.startDate).filter(Boolean).sort();
+          const ends = deptPlanItems.map((i: any) => i.endDate).filter(Boolean).sort();
+          if (starts.length) planStart = starts[0];
+          if (ends.length) planEnd = ends[ends.length - 1];
         }
       }
 
+      const actualStart = actual.actualStart || '';
+      const actualEnd = actual.actualEnd || '';
+      const failReason = actual.failReason || actual.remarks || '';
+      const relatedDept = actual.relatedDept || '';
+
+      const hasActualEnd = actualEnd && actualEnd.trim() !== '' && actualEnd !== '-';
+      if (status === 'Pending' && hasActualEnd) return;
+      if (status === 'Complete' && !hasActualEnd) return;
+
+      const startResult = calcResult(actualStart, planStart);
+      const endResult = calcResult(actualEnd, planEnd);
+
       exportRows.push({
-        OrderNo: ord.orderNo,
-        Buyer: ord.buyer,
-        BookingDate: ord.bookingDate,
-        Style: ord.style || '',
-        PlanStart: planStart,
-        PlanEnd: planEnd,
-        ActualStart: actual.actualStart || '',
-        ActualEnd: actual.actualEnd || '',
-        ActualProd: actual.actualProd || '',
-        LeadDays: leadDays,
-        Status: actual.status || 'Pending',
+        'SL': sl++,
+        'Order/Booking No.': ord.orderNo,
+        'Buyer': ord.buyer,
+        'Plan Start': planStart,
+        'Plan End': planEnd,
+        'Actual Start': actualStart,
+        'Actual End': actualEnd,
+        'Start Result': startResult,
+        'End Result': endResult,
+        'Fail Reason': failReason,
+        'Related Dept.': relatedDept,
       });
     });
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(exportRows.length > 0 ? exportRows : [{ Message: 'No data available' }]);
-    XLSX.utils.book_append_sheet(wb, ws, `Tracking - ${dept}`);
+    XLSX.utils.book_append_sheet(wb, ws, `${dept.toUpperCase()} Tracking`);
 
     return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   }
