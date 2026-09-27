@@ -340,7 +340,7 @@ export class OrderService {
   }
 
   /**
-   * Retrieves confirmed orders for Plan vs Actual Tracking
+   * Retrieves tracking data matching Exp specification (planDocs, orderMap, and merged orders)
    */
   static async getTrackingData(params: {
     dept: string;
@@ -348,15 +348,21 @@ export class OrderService {
     limit?: number;
     buyer?: string;
     search?: string;
+    all?: string;
+    status?: string;
+    exact?: string;
     startMin?: string;
     startMax?: string;
     endMin?: string;
     endMax?: string;
     allowedRawBuyers?: string[];
   }): Promise<{
+    planDocs: any[];
+    orderMap: Record<string, any>;
     orders: any[];
     total: number;
     page: number;
+    limit: number;
     totalPages: number;
     buyers: string[];
   }> {
@@ -366,6 +372,9 @@ export class OrderService {
       limit = 10,
       buyer = '',
       search = '',
+      all = '',
+      status = '',
+      exact = '',
       startMin = '',
       startMax = '',
       endMin = '',
@@ -374,27 +383,44 @@ export class OrderService {
     } = params;
 
     const pageNum = Math.max(1, page);
-    const limitNum = Math.max(1, limit);
-    const skip = (pageNum - 1) * limitNum;
+    const limitNum = Math.max(1, limit || 10);
+    const noLimit = all === 'true' || limit === 0;
+    const skip = noLimit ? 0 : (pageNum - 1) * limitNum;
 
     const dbDept = dept === 'deliveryfloor' ? 'delivery' : dept;
     const statusField = `${dbDept}PlanStatus`;
+    const actualField = (dept === 'deliveryfloor' ? 'delivery' : dept) + 'Actual';
 
+    // 1. Get Confirmed orders from Order collection
     const orderFilter: Record<string, any> = { [statusField]: 'Confirm' };
 
-    // Active upload file constraint
     const deptValid = await DeptValidOrders.findOne({ dept: dbDept }).lean();
-    if (deptValid?.validOrderNos && deptValid.validOrderNos.length > 0) {
+    if (deptValid && deptValid.validOrderNos && deptValid.validOrderNos.length > 0) {
       orderFilter.orderNo = { $in: deptValid.validOrderNos };
     }
 
     if (buyer) orderFilter.buyer = { $regex: buyer, $options: 'i' };
     if (search && search.trim()) {
-      orderFilter.orderNo = { $regex: search.trim(), $options: 'i' };
+      const escaped = String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = exact === 'true' ? `^${escaped}$` : escaped;
+      const searchRegex = new RegExp(pattern, 'i');
+
+      if (orderFilter.orderNo && orderFilter.orderNo.$in) {
+        orderFilter.orderNo.$in = orderFilter.orderNo.$in.filter((no: string) => searchRegex.test(no));
+      } else {
+        orderFilter.orderNo = { $regex: pattern, $options: 'i' };
+      }
     }
 
     if (allowedRawBuyers) {
-      orderFilter.buyer = { $in: allowedRawBuyers };
+      if (orderFilter.buyer) {
+        orderFilter.$and = orderFilter.$and || [];
+        orderFilter.$and.push({ buyer: orderFilter.buyer });
+        orderFilter.$and.push({ buyer: { $in: allowedRawBuyers } });
+        delete orderFilter.buyer;
+      } else {
+        orderFilter.buyer = { $in: allowedRawBuyers };
+      }
     }
 
     const confirmedOrders = await Order.find(orderFilter, {
@@ -412,56 +438,430 @@ export class OrderService {
       .lean();
 
     const orderNos = confirmedOrders.map((o) => o.orderNo);
-    const planDocs = await OrderDate.find({ orderNo: { $in: orderNos } }).lean();
 
-    const planMap = new Map<string, any>();
-    planDocs.forEach((p) => planMap.set(p.orderNo, p));
+    // 2. Find orphaned tracking data in OrderDate
+    const orphanMatch: any[] = [{ orderNo: { $nin: orderNos } }];
+    if (search && search.trim()) {
+      const escaped = String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = exact === 'true' ? `^${escaped}$` : escaped;
+      orphanMatch.push({ orderNo: { $regex: pattern, $options: 'i' } });
+    }
 
-    // Combine order spec with saved floor actuals and plan dates
-    let mergedList: any[] = [];
+    const orphanFilter = {
+      $and: orphanMatch,
+      $or: [
+        { [`${dbDept}Status`]: 'Confirm' },
+        { [`${actualField}.actualStart`]: { $exists: true, $ne: '' } },
+        { [`${actualField}.actualEnd`]: { $exists: true, $ne: '' } },
+        { [`${actualField}.failReason`]: { $exists: true, $ne: '' } },
+        { [`${actualField}.relatedDept`]: { $exists: true, $ne: '' } },
+      ],
+    };
 
-    confirmedOrders.forEach((ord) => {
-      const plan = planMap.get(ord.orderNo);
-      const actualKey = `${dept}Actual`;
-      const actual = plan ? plan[actualKey] || {} : {};
-      const deptPlanItems = plan ? plan[dbDept] || [] : [];
+    const orphanedDocs = await OrderDate.find(orphanFilter, { orderNo: 1, [actualField]: 1 }).lean();
 
-      let planStart = '';
-      let planEnd = '';
-      if (Array.isArray(deptPlanItems) && deptPlanItems.length > 0) {
-        planStart = deptPlanItems[0].planStart || '';
-        planEnd = deptPlanItems[0].planEnd || '';
+    const orphanedOrderNos = orphanedDocs.map((d) => d.orderNo);
+    let orphanedOrderInfos: any[] = [];
+    if (orphanedOrderNos.length > 0) {
+      const orphanOrderFilter: Record<string, any> = { orderNo: { $in: orphanedOrderNos } };
+      if (buyer) orphanOrderFilter.buyer = { $regex: buyer, $options: 'i' };
+
+      if (allowedRawBuyers) {
+        if (orphanOrderFilter.buyer) {
+          orphanOrderFilter.$and = orphanOrderFilter.$and || [];
+          orphanOrderFilter.$and.push({ buyer: orphanOrderFilter.buyer });
+          orphanOrderFilter.$and.push({ buyer: { $in: allowedRawBuyers } });
+          delete orphanOrderFilter.buyer;
+        } else {
+          orphanOrderFilter.buyer = { $in: allowedRawBuyers };
+        }
       }
 
-      // Date range filters
-      if (startMin && planStart && planStart < startMin) return;
-      if (startMax && planStart && planStart > startMax) return;
-      if (endMin && planEnd && planEnd < endMin) return;
-      if (endMax && planEnd && planEnd > endMax) return;
+      orphanedOrderInfos = await Order.find(orphanOrderFilter, {
+        orderNo: 1,
+        buyer: 1,
+        bookingDate: 1,
+      }).lean();
+    }
 
-      mergedList.push({
-        orderNo: ord.orderNo,
-        buyer: ord.buyer,
-        bookingDate: ord.bookingDate,
+    let filteredOrphanedDocs = orphanedDocs;
+    if (buyer || allowedRawBuyers) {
+      const orphanedWithBuyer = new Set(orphanedOrderInfos.map((o) => o.orderNo));
+      filteredOrphanedDocs = orphanedDocs.filter((d) => orphanedWithBuyer.has(d.orderNo));
+    }
+
+    const allTrackingOrderNos = [...orderNos, ...filteredOrphanedDocs.map((d) => d.orderNo)];
+
+    if (allTrackingOrderNos.length === 0) {
+      return {
+        planDocs: [],
+        orderMap: {},
+        orders: [],
+        total: 0,
+        page: 1,
+        limit: limitNum,
+        totalPages: 0,
+        buyers: [],
+      };
+    }
+
+    // 4. Fetch lightweight plan tracking info
+    const planTrackingInfo: any[] =
+      orderNos.length > 0
+        ? await OrderDate.find({ orderNo: { $in: orderNos } }, { orderNo: 1, [actualField]: 1 }).lean()
+        : [];
+
+    const planDocSet = new Set(planTrackingInfo.map((p) => p.orderNo));
+    orderNos.forEach((orderNo) => {
+      if (!planDocSet.has(orderNo)) {
+        planTrackingInfo.push({ orderNo });
+        planDocSet.add(orderNo);
+      }
+    });
+
+    filteredOrphanedDocs.forEach((doc) => {
+      if (!planDocSet.has(doc.orderNo)) {
+        planTrackingInfo.push(doc);
+        planDocSet.add(doc.orderNo);
+      }
+    });
+
+    // 5. Filter by Pending / Complete status
+    let filteredPlanInfo = planTrackingInfo;
+    if (status === 'Pending' || status === 'Complete') {
+      filteredPlanInfo = planTrackingInfo.filter((plan) => {
+        const actual = plan[actualField];
+        const hasActualEnd = actual && actual.actualEnd && actual.actualEnd.trim() !== '' && actual.actualEnd !== '-';
+        if (status === 'Pending') return !hasActualEnd;
+        if (status === 'Complete') return hasActualEnd;
+        return true;
+      });
+    }
+
+    // Date range filtering
+    const hasDateFilter = startMin || startMax || endMin || endMax;
+    if (hasDateFilter && filteredPlanInfo.length > 0) {
+      const filterOrderNos = filteredPlanInfo.map((p) => p.orderNo);
+      const filterDocs = await OrderDate.find({ orderNo: { $in: filterOrderNos } }, { orderNo: 1, [dbDept]: 1 }).lean();
+      const filterOrders = await Order.find(
+        { orderNo: { $in: filterOrderNos } },
+        {
+          orderNo: 1,
+          [`${dbDept}Items`]: 1,
+          knitStart: 1,
+          knitEnd: 1,
+          dyeStart: 1,
+          dyeEnd: 1,
+          deliStart: 1,
+          deliEnd: 1,
+        }
+      ).lean();
+
+      const filterOrdersMap: Record<string, any> = {};
+      filterOrders.forEach((o) => {
+        filterOrdersMap[o.orderNo] = o;
+      });
+
+      filteredPlanInfo = filteredPlanInfo.filter((plan: any) => {
+        const doc = filterDocs.find((d: any) => d.orderNo === plan.orderNo) as any;
+        const orderInfo = filterOrdersMap[plan.orderNo] || {};
+        const rawItems = doc && doc[dbDept] && doc[dbDept].length > 0 ? doc[dbDept] : (orderInfo as any)[`${dbDept}Items`] || [];
+
+        let startDates: string[] = [];
+        let endDates: string[] = [];
+
+        if (dept === 'deliveryfloor') {
+          const floorItems = rawItems.filter((item: any) => {
+            const type = item.floorPlanType || item['Delivery Plan Type (Floor)'] || '';
+            return type === 'Confirm' || type === 'Tentative';
+          });
+          startDates = floorItems.map((item: any) => item.floorStartDate || item['Delivery Plan Start (Floor)'] || '').filter(Boolean);
+          endDates = floorItems.map((item: any) => item.floorEndDate || item['Delivery Plan End (Floor)'] || '').filter(Boolean);
+        } else {
+          startDates = rawItems
+            .map((item: any) => item.startDate || item['Plan Start Date'] || item['Plan Start'] || item['Start Date'] || '')
+            .filter(Boolean);
+          endDates = rawItems
+            .map((item: any) => item.endDate || item['Plan End Date'] || item['Plan End'] || item['End Date'] || '')
+            .filter(Boolean);
+        }
+
+        if (startDates.length === 0 && endDates.length === 0) {
+          if (dept === 'knitting') {
+            if (orderInfo.knitStart) startDates = [orderInfo.knitStart];
+            if (orderInfo.knitEnd) endDates = [orderInfo.knitEnd];
+          } else if (dept === 'dyeing') {
+            if (orderInfo.dyeStart) startDates = [orderInfo.dyeStart];
+            if (orderInfo.dyeEnd) endDates = [orderInfo.dyeEnd];
+          } else if (dept === 'delivery' || dept === 'deliveryfloor') {
+            if (orderInfo.deliStart) startDates = [orderInfo.deliStart];
+            if (orderInfo.deliEnd) endDates = [orderInfo.deliEnd];
+          }
+        }
+
+        startDates.sort();
+        endDates.sort();
+        const pStart = startDates.length > 0 ? startDates[0] : '';
+        const pEnd = endDates.length > 0 ? endDates[endDates.length - 1] : '';
+
+        if (startMin && pStart && new Date(pStart).setHours(0, 0, 0, 0) < new Date(startMin).setHours(0, 0, 0, 0)) return false;
+        if (startMin && !pStart) return false;
+
+        if (startMax && pStart && new Date(pStart).setHours(0, 0, 0, 0) > new Date(startMax).setHours(0, 0, 0, 0)) return false;
+        if (startMax && !pStart) return false;
+
+        if (endMin && pEnd && new Date(pEnd).setHours(0, 0, 0, 0) < new Date(endMin).setHours(0, 0, 0, 0)) return false;
+        if (endMin && !pEnd) return false;
+
+        if (endMax && pEnd && new Date(pEnd).setHours(0, 0, 0, 0) > new Date(endMax).setHours(0, 0, 0, 0)) return false;
+        if (endMax && !pEnd) return false;
+
+        return true;
+      });
+    }
+
+    // 6. Build orderMap
+    const orderMap: Record<string, any> = {};
+    confirmedOrders.forEach((o) => {
+      orderMap[o.orderNo] = o;
+    });
+    orphanedOrderInfos.forEach((o) => {
+      if (!orderMap[o.orderNo]) orderMap[o.orderNo] = o;
+    });
+
+    // 7. Get all buyers for filter dropdown
+    const allBuyersList = await Order.distinct('buyer', { [statusField]: 'Confirm' });
+    orphanedOrderInfos.forEach((o) => {
+      if (o.buyer) allBuyersList.push(o.buyer);
+    });
+    const buyers = [
+      ...new Set(
+        allBuyersList.filter((b) => b && b.trim() !== '' && b !== 'N/A').map((b) => b.trim().toUpperCase())
+      ),
+    ].sort();
+
+    // 8. Pagination
+    const totalFiltered = filteredPlanInfo.length;
+    const paginatedInfo = noLimit ? filteredPlanInfo : filteredPlanInfo.slice(skip, skip + limitNum);
+    const paginatedOrderNos = paginatedInfo.map((p) => p.orderNo);
+
+    // 9. Fetch HEAVY plan data for paginated orderNos
+    let paginatedDocs: any[] = [];
+    if (paginatedOrderNos.length > 0) {
+      const projection: Record<string, any> = {
+        orderNo: 1,
+        [dbDept]: 1,
+        [`${dbDept}Status`]: 1,
+        [`${dbDept}CompletedDate`]: 1,
+        [actualField]: 1,
+      };
+      if (dept === 'dyeing' || dept === 'delivery' || dept === 'deliveryfloor') {
+        projection.dyeing = 1;
+      }
+      paginatedDocs = await OrderDate.find({ orderNo: { $in: paginatedOrderNos } }, projection).lean();
+    }
+
+    const heavyDocSet = new Set(paginatedDocs.map((p) => p.orderNo));
+    paginatedOrderNos.forEach((orderNo) => {
+      if (!heavyDocSet.has(orderNo)) {
+        paginatedDocs.push({ orderNo, [dbDept]: [] });
+      }
+    });
+
+    const orderProjection: Record<string, any> = { orderNo: 1, [`${dbDept}Items`]: 1 };
+    if (dept === 'delivery' || dept === 'deliveryfloor') {
+      orderProjection.dyeingItems = 1;
+    }
+    const paginatedOrders = await Order.find({ orderNo: { $in: paginatedOrderNos } }, orderProjection).lean();
+    const paginatedOrdersMap: Record<string, any> = {};
+    const paginatedDyeingOrdersMap: Record<string, any> = {};
+    paginatedOrders.forEach((o: any) => {
+      paginatedOrdersMap[o.orderNo] = o[`${dbDept}Items`] || [];
+      if (dept === 'delivery' || dept === 'deliveryfloor') {
+        paginatedDyeingOrdersMap[o.orderNo] = o.dyeingItems || [];
+      }
+    });
+
+    paginatedDocs.forEach((doc) => {
+      doc.uploadedItems = paginatedOrdersMap[doc.orderNo] || [];
+      if (dept === 'delivery' || dept === 'deliveryfloor') {
+        if (!doc.dyeing || doc.dyeing.length === 0) {
+          const rawDyeing = paginatedDyeingOrdersMap[doc.orderNo] || [];
+          if (rawDyeing.length > 0) {
+            doc.dyeing = rawDyeing.map((raw: any) => ({ itemData: raw }));
+          }
+        }
+      }
+
+      if (!doc[dbDept] || doc[dbDept].length === 0) {
+        const rawItems = paginatedOrdersMap[doc.orderNo] || [];
+        doc[dbDept] = rawItems.map((raw: any) => {
+          let startDate =
+            raw['Plan Start Date'] ||
+            raw['Plan Start'] ||
+            raw['Start Date'] ||
+            raw['Knit Start Date'] ||
+            raw['Dyeing Start Date'] ||
+            '';
+          let endDate =
+            raw['Plan End Date'] ||
+            raw['Plan End'] ||
+            raw['End Date'] ||
+            raw['Knit End Date'] ||
+            raw['Dyeing End Date'] ||
+            '';
+
+          if (dbDept === 'delivery') {
+            startDate = raw['Delivery Plan Start'] || startDate;
+            endDate = raw['Delivery Plan End'] || endDate;
+            return {
+              itemData: raw,
+              floorStartDate: raw['Delivery Plan Start (Floor)'] || '',
+              floorEndDate: raw['Delivery Plan End (Floor)'] || '',
+              floorPlanType: raw['Delivery Plan Type (Floor)'] || '',
+              startDate,
+              endDate,
+            };
+          }
+          return {
+            itemData: raw,
+            startDate,
+            endDate,
+          };
+        });
+      }
+    });
+
+    // Populate unit and processName for dyeing, delivery, deliveryfloor
+    if (dept === 'dyeing' || dept === 'delivery' || dept === 'deliveryfloor') {
+      const invalidStrings = new Set(['', '-', 'n/a', 'select', 'null', 'undefined']);
+      paginatedDocs.forEach((doc) => {
+        const dyeingItems =
+          doc.dyeing && doc.dyeing.length > 0
+            ? doc.dyeing
+            : (paginatedDyeingOrdersMap[doc.orderNo] || []).map((r: any) => ({ itemData: r }));
+        const units: string[] = [];
+        const processes: string[] = [];
+
+        dyeingItems.forEach((it: any) => {
+          const d = it.itemData || it;
+          const u =
+            d.Unit !== undefined && d.Unit !== null
+              ? String(d.Unit).trim()
+              : it.Unit !== undefined && it.Unit !== null
+              ? String(it.Unit).trim()
+              : '';
+          if (u) {
+            u.split('+')
+              .map((s: string) => s.trim())
+              .filter(Boolean)
+              .forEach((part: string) => {
+                if (!invalidStrings.has(part.toLowerCase()) && !units.includes(part)) {
+                  units.push(part);
+                }
+              });
+          }
+
+          const p =
+            d.ProcessName ||
+            d['Process Name'] ||
+            d.Process ||
+            it.ProcessName ||
+            it['Process Name'] ||
+            '';
+          if (p) {
+            String(p)
+              .trim()
+              .split('+')
+              .map((s: string) => s.trim())
+              .filter(Boolean)
+              .forEach((part: string) => {
+                if (!invalidStrings.has(part.toLowerCase()) && !processes.includes(part)) {
+                  processes.push(part);
+                }
+              });
+          }
+        });
+
+        doc.unit = units.join('+');
+        doc.processName = processes.join('+');
+      });
+    }
+
+    const finalPaginatedDocs: any[] = [];
+    paginatedOrderNos.forEach((orderNo) => {
+      const doc = paginatedDocs.find((d) => d.orderNo === orderNo);
+      if (doc) finalPaginatedDocs.push(doc);
+    });
+
+    const paginatedOrderMap: Record<string, any> = {};
+    finalPaginatedDocs.forEach((p) => {
+      if (orderMap[p.orderNo]) paginatedOrderMap[p.orderNo] = orderMap[p.orderNo];
+    });
+
+    // Merged orders for standard list consumption in Tracking Page
+    const mergedOrders = finalPaginatedDocs.map((doc: any) => {
+      const oInfo = paginatedOrderMap[doc.orderNo] || {};
+      const actual = doc[actualField] || {};
+      const deptItems = doc[dbDept] || [];
+
+      let startDates: string[] = [];
+      let endDates: string[] = [];
+      if (dept === 'deliveryfloor') {
+        const floorItems = deptItems.filter((item: any) => {
+          const type = item.floorPlanType || item['Delivery Plan Type (Floor)'] || '';
+          return type === 'Confirm' || type === 'Tentative';
+        });
+        startDates = floorItems.map((i: any) => i.floorStartDate || i['Delivery Plan Start (Floor)'] || '').filter(Boolean);
+        endDates = floorItems.map((i: any) => i.floorEndDate || i['Delivery Plan End (Floor)'] || '').filter(Boolean);
+      } else {
+        startDates = deptItems.map((i: any) => i.startDate || i['Plan Start Date'] || i['Start Date'] || '').filter(Boolean);
+        endDates = deptItems.map((i: any) => i.endDate || i['Plan End Date'] || i['End Date'] || '').filter(Boolean);
+      }
+
+      if (startDates.length === 0 && endDates.length === 0) {
+        if (dept === 'knitting') {
+          if (oInfo.knitStart) startDates = [oInfo.knitStart];
+          if (oInfo.knitEnd) endDates = [oInfo.knitEnd];
+        } else if (dept === 'dyeing') {
+          if (oInfo.dyeStart) startDates = [oInfo.dyeStart];
+          if (oInfo.dyeEnd) endDates = [oInfo.dyeEnd];
+        } else if (dept === 'delivery' || dept === 'deliveryfloor') {
+          if (oInfo.deliStart) startDates = [oInfo.deliStart];
+          if (oInfo.deliEnd) endDates = [oInfo.deliEnd];
+        }
+      }
+
+      startDates.sort();
+      endDates.sort();
+      const planStart = startDates.length > 0 ? startDates[0] : '';
+      const planEnd = endDates.length > 0 ? endDates[endDates.length - 1] : '';
+
+      return {
+        orderNo: doc.orderNo,
+        buyer: oInfo.buyer || doc.buyer || 'N/A',
+        bookingDate: oInfo.bookingDate || '',
         planStart,
         planEnd,
         actualStart: actual.actualStart || '',
         actualEnd: actual.actualEnd || '',
-        actualProd: actual.actualProd || '',
-        actualStatus: actual.status || 'Pending',
-        planItems: deptPlanItems,
-      });
+        failReason: actual.failReason || actual.remarks || '',
+        relatedDept: actual.relatedDept || '',
+        status: actual.status || (actual.actualEnd ? 'Complete' : 'Pending'),
+        unit: doc.unit || '',
+        processName: doc.processName || '',
+        planItems: deptItems,
+      };
     });
 
-    const total = mergedList.length;
-    const paginated = mergedList.slice(skip, skip + limitNum);
-    const buyers = Array.from(new Set(mergedList.map((o) => o.buyer))).filter(Boolean).sort();
-
     return {
-      orders: paginated,
-      total,
-      page: pageNum,
-      totalPages: Math.ceil(total / limitNum),
+      planDocs: finalPaginatedDocs,
+      orderMap: paginatedOrderMap,
+      orders: mergedOrders,
+      total: totalFiltered,
+      page: noLimit ? 1 : pageNum,
+      limit: noLimit ? totalFiltered : limitNum,
+      totalPages: noLimit ? 1 : Math.ceil(totalFiltered / limitNum),
       buyers,
     };
   }
