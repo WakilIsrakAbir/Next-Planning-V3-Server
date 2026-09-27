@@ -3,6 +3,7 @@ import { env } from './config/env.js';
 import { connectDB } from './config/db.js';
 import { ensureDefaultAdmin } from './scripts/seed-admin.js';
 
+// Database initialized with abir_group MongoDB cluster
 async function startServer(): Promise<void> {
   try {
     // 1. Connect to Database
