@@ -4,8 +4,8 @@ import mongoose from 'mongoose';
 
 export async function ensureDefaultAdmin(): Promise<void> {
   try {
-    const adminCount = await User.countDocuments({ role: 'Admin' });
-    if (adminCount === 0) {
+    const existingAdmin = await User.findOne({ username: 'admin' });
+    if (!existingAdmin) {
       const defaultAdmin = new User({
         username: 'admin',
         password: 'admin123',
@@ -18,7 +18,7 @@ export async function ensureDefaultAdmin(): Promise<void> {
       await defaultAdmin.save();
       console.log('✅ Default Super Admin initialized: username "admin", password "admin123"');
     } else {
-      console.log(`ℹ️ Admin user already exists (${adminCount} found).`);
+      console.log('ℹ️ Admin user "admin" already exists.');
     }
   } catch (err: any) {
     console.error('Error seeding default admin:', err.message);
