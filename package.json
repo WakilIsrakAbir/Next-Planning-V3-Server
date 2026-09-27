@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "seed": "tsx src/utils/seed-admin.ts",
+    "seed": "tsx src/scripts/seed-admin.ts",
     "lint": "tsc --noEmit"
   },
   "keywords": [
