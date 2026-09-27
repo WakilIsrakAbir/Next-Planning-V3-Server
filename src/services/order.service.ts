@@ -233,9 +233,47 @@ export class OrderService {
     orderNo: string,
     dept?: string
   ): Promise<{ order: IOrder; planData: IOrderDate | null }> {
-    const order = await Order.findOne({ orderNo }).lean();
+    const order = (await Order.findOne({ orderNo }).lean()) as any;
     if (!order) {
       throw new Error(`Order "${orderNo}" not found.`);
+    }
+
+    // Gather department items for comprehensive fallbacks
+    const allItems = [
+      ...(order.knittingItems || []),
+      ...(order.dyeingItems || []),
+      ...(order.finishingItems || []),
+      ...(order.deliveryItems || []),
+      ...(order.ydItems || []),
+    ];
+
+    // Fallbacks if general info was not uploaded for this order
+    if ((!order.requiredQtyKgs || order.requiredQtyKgs === '') && allItems.length > 0) {
+      const sum = allItems.reduce((acc: number, it: any) => {
+        const q = Number(it.RequiredQtyKgs || it.requiredQtyKgs || it['Req Qty'] || it.Qty || 0);
+        return acc + (isNaN(q) ? 0 : q);
+      }, 0);
+      if (sum > 0) order.requiredQtyKgs = sum;
+    }
+
+    if (!order.buyer && allItems.length > 0) {
+      const bItem = allItems.find((it: any) => it.Buyer || it.BuyerName || it.Customer);
+      if (bItem) order.buyer = bItem.Buyer || bItem.BuyerName || bItem.Customer || '';
+    }
+
+    if (!order.style && allItems.length > 0) {
+      const sItem = allItems.find((it: any) => it.Style || it.style);
+      if (sItem) order.style = sItem.Style || sItem.style || '';
+    }
+
+    if (!order.gmtUnit && allItems.length > 0) {
+      const uItem = allItems.find((it: any) => it.Unit || it['Booking Unit'] || it.GmtUnit);
+      if (uItem) order.gmtUnit = uItem.Unit || uItem['Booking Unit'] || uItem.GmtUnit || '';
+    }
+
+    if (!order.floor && allItems.length > 0) {
+      const fItem = allItems.find((it: any) => it.Floor || it.floor);
+      if (fItem) order.floor = fItem.Floor || fItem.floor || '';
     }
 
     const planData = await OrderDate.findOne({ orderNo }).lean();
