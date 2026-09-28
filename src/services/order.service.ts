@@ -43,12 +43,14 @@ export class OrderService {
   private static reportCache: Map<string, { data: any; timestamp: number }> = new Map();
   private static validOrdersCache: Map<string, { validOrderNos: string[]; timestamp: number }> = new Map();
   private static deptBuyersCache: Map<string, { buyers: string[]; timestamp: number }> = new Map();
+  private static deptOrdersDefaultCache: Map<string, { data: IPaginatedOrdersResult; timestamp: number }> = new Map();
   private static CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   public static clearReportCache(): void {
     OrderService.reportCache.clear();
     OrderService.validOrdersCache.clear();
     OrderService.deptBuyersCache.clear();
+    OrderService.deptOrdersDefaultCache.clear();
     clearBuyersCache();
   }
 
@@ -173,6 +175,15 @@ export class OrderService {
       allowedRawBuyers,
     } = params;
 
+    const isDefault = page === 1 && limit === 10 && !search && !buyer && !populateItems;
+    const defaultCacheKey = `${dept}_${status}_${(allowedRawBuyers || []).sort().join(',')}`;
+    if (isDefault) {
+      const cached = OrderService.deptOrdersDefaultCache.get(defaultCacheKey);
+      if (cached && Date.now() - cached.timestamp < 60000) {
+        return cached.data;
+      }
+    }
+
     const pageNum = Math.max(1, page);
     const limitNum = Math.min(100, Math.max(1, limit));
     const skip = (pageNum - 1) * limitNum;
@@ -252,7 +263,7 @@ export class OrderService {
       )
     ).sort();
 
-    return {
+    const result: IPaginatedOrdersResult = {
       orders,
       total,
       page: pageNum,
@@ -260,6 +271,12 @@ export class OrderService {
       totalPages: Math.ceil(total / limitNum),
       buyers: formattedBuyers,
     };
+
+    if (isDefault) {
+      OrderService.deptOrdersDefaultCache.set(defaultCacheKey, { data: result, timestamp: Date.now() });
+    }
+
+    return result;
   }
 
   /**

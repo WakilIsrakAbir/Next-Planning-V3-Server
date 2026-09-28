@@ -128,11 +128,24 @@ const orderSchema = new Schema<IOrder>(
   { timestamps: true, strict: false }
 );
 
-// Compound indexes for optimal query execution
+// Compound indexes for optimal query execution and sorting
 orderSchema.index({ buyer: 1, knittingPlanStatus: 1 });
 orderSchema.index({ buyer: 1, dyeingPlanStatus: 1 });
 orderSchema.index({ buyer: 1, finishingPlanStatus: 1 });
 orderSchema.index({ buyer: 1, deliveryPlanStatus: 1 });
 orderSchema.index({ buyer: 1, ydPlanStatus: 1 });
+
+// Sorter compound indexes: satisfying status filtering + orderNo sort without in-memory sorting
+orderSchema.index({ knittingPlanStatus: 1, orderNo: -1 });
+orderSchema.index({ dyeingPlanStatus: 1, orderNo: -1 });
+orderSchema.index({ finishingPlanStatus: 1, orderNo: -1 });
+orderSchema.index({ deliveryPlanStatus: 1, orderNo: -1 });
+orderSchema.index({ ydPlanStatus: 1, orderNo: -1 });
+
+orderSchema.index({ buyer: 1, knittingPlanStatus: 1, orderNo: -1 });
+orderSchema.index({ buyer: 1, dyeingPlanStatus: 1, orderNo: -1 });
+orderSchema.index({ buyer: 1, finishingPlanStatus: 1, orderNo: -1 });
+orderSchema.index({ buyer: 1, deliveryPlanStatus: 1, orderNo: -1 });
+orderSchema.index({ buyer: 1, ydPlanStatus: 1, orderNo: -1 });
 
 export const Order: Model<IOrder> = mongoose.model<IOrder>('Order', orderSchema);
