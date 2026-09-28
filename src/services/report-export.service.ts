@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import { Order } from '../models/Order.model.js';
 import { OrderDate } from '../models/OrderDate.model.js';
 import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
+import { OrderService } from './order.service.js';
 
 export class ReportExportService {
   /**
@@ -154,10 +155,30 @@ export class ReportExportService {
       const startResult = calcResult(actualStart, planStart);
       const endResult = calcResult(actualEnd, planEnd);
 
+      const dynCols: Record<string, any> = {};
+      const { extProd, extBal } = OrderService.computeTrackingDeptValues(
+        {
+          uploadedItems: (ord as any)[`${dbDept}Items`] || [],
+          [dbDept]: deptPlanItems,
+        },
+        dept
+      );
+      if (dept === 'knitting') {
+        dynCols['Knit Prod.'] = extProd !== '' ? Number(extProd).toFixed(2) : '';
+        dynCols['Knit Bal.'] = extBal !== '' ? Number(extBal).toFixed(2) : '';
+      } else if (dept === 'dyeing') {
+        dynCols['Dyeing Prod.'] = extProd !== '' ? Number(extProd).toFixed(2) : '';
+        dynCols['Dyeing Bal.'] = extBal !== '' ? Number(extBal).toFixed(2) : '';
+      } else if (dept === 'delivery' || dept === 'deliveryfloor') {
+        dynCols['NetDeliveryQtyKgs'] = extProd !== '' ? Number(extProd).toFixed(2) : '';
+        dynCols['Deli. Bal.'] = extBal !== '' ? Number(extBal).toFixed(2) : '';
+      }
+
       exportRows.push({
         'SL': sl++,
         'Order/Booking No.': ord.orderNo,
         'Buyer': ord.buyer,
+        ...dynCols,
         'Plan Start': planStart,
         'Plan End': planEnd,
         'Actual Start': actualStart,

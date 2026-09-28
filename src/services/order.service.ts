@@ -343,6 +343,105 @@ export class OrderService {
   }
 
   /**
+   * Helper to parse numeric values from tracking item rows
+   */
+  private static parseTrackingNum(val: any): number {
+    if (val === undefined || val === null || val === '' || val === '-') return 0;
+    const clean = String(val).replace(/,/g, '').trim();
+    const num = parseFloat(clean);
+    return isNaN(num) ? 0 : num;
+  }
+
+  /**
+   * Helper to find matching column value from item row
+   */
+  private static getTrackingRowVal(row: any, fieldNames: string[]): any {
+    if (!row) return undefined;
+    for (const f of fieldNames) {
+      if (row[f] !== undefined && row[f] !== null && row[f] !== '') {
+        return row[f];
+      }
+    }
+    const keys = Object.keys(row);
+    for (const f of fieldNames) {
+      const norm = f.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const found = keys.find((k) => k.toLowerCase().replace(/[^a-z0-9]/g, '') === norm);
+      if (found && row[found] !== undefined && row[found] !== null && row[found] !== '') {
+        return row[found];
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Computes department tracking production and balance values (extProd, extBal) matching Exp specification
+   */
+  public static computeTrackingDeptValues(plan: any, deptKey: string): { extProd: number | ''; extBal: number | '' } {
+    const dbDept = deptKey === 'deliveryfloor' ? 'delivery' : deptKey;
+    let rawItems =
+      plan.uploadedItems && Array.isArray(plan.uploadedItems) && plan.uploadedItems.length > 0
+        ? plan.uploadedItems
+        : [];
+
+    if (rawItems.length === 0 && plan[dbDept] && Array.isArray(plan[dbDept]) && plan[dbDept].length > 0) {
+      rawItems = plan[dbDept];
+    }
+
+    if (!rawItems || rawItems.length === 0) {
+      return { extProd: '', extBal: '' };
+    }
+
+    let prodFields: string[] = [];
+    let balFields: string[] = [];
+
+    if (deptKey === 'knitting') {
+      prodFields = ['Knit Prod.', 'KnitProd', 'Knit Production', 'Knit Prod'];
+      balFields = ['Knit. Bala.', 'KnitBala', 'Knit Bala', 'Knit Balance', 'Knit. Bal.', 'Knit Bal.'];
+    } else if (deptKey === 'dyeing') {
+      prodFields = ['Dyeing Prod.', 'Dyeing ok', 'DyeingProd', 'Dyeing Prod', 'Dyeing Production'];
+      balFields = ['Dyeing Bala.', 'Dyeing Bal.', 'DyeingBala', 'Dyeing Balance', 'Dye Bal'];
+    } else if (deptKey === 'delivery' || deptKey === 'deliveryfloor') {
+      prodFields = ['NetDeliveryQtyKgs', 'Net Delivery Qty Kgs', 'NetDeliveryQty', 'Delivery Qty', 'DeliveryQty'];
+      balFields = ['Deli. Bala.', 'Deli. Bal.', 'DeliBal', 'Deli Bal.', 'Delivery Balance', 'Deli Bal'];
+    } else {
+      return { extProd: '', extBal: '' };
+    }
+
+    let prodSum = 0;
+    let balSum = 0;
+    let hasFound = false;
+
+    const tryCalc = (items: any[]) => {
+      items.forEach((item: any) => {
+        const row = item.itemData || item;
+        const pVal = OrderService.getTrackingRowVal(row, prodFields);
+        const bVal = OrderService.getTrackingRowVal(row, balFields);
+
+        if (pVal !== undefined) {
+          prodSum += OrderService.parseTrackingNum(pVal);
+          hasFound = true;
+        }
+        if (bVal !== undefined) {
+          balSum += OrderService.parseTrackingNum(bVal);
+          hasFound = true;
+        }
+      });
+    };
+
+    tryCalc(rawItems);
+
+    if (!hasFound && plan[dbDept] && Array.isArray(plan[dbDept]) && plan[dbDept].length > 0 && plan[dbDept] !== rawItems) {
+      tryCalc(plan[dbDept]);
+    }
+
+    if (!hasFound) {
+      return { extProd: '', extBal: '' };
+    }
+
+    return { extProd: prodSum, extBal: balSum };
+  }
+
+  /**
    * Retrieves tracking data matching Exp specification (planDocs, orderMap, and merged orders)
    */
   static async getTrackingData(params: {
@@ -840,10 +939,16 @@ export class OrderService {
       const planStart = startDates.length > 0 ? startDates[0] : '';
       const planEnd = endDates.length > 0 ? endDates[endDates.length - 1] : '';
 
+      const { extProd, extBal } = OrderService.computeTrackingDeptValues(doc, dept);
+      doc.extProd = extProd;
+      doc.extBal = extBal;
+
       return {
         orderNo: doc.orderNo,
         buyer: oInfo.buyer || doc.buyer || 'N/A',
         bookingDate: oInfo.bookingDate || '',
+        extProd,
+        extBal,
         planStart,
         planEnd,
         actualStart: actual.actualStart || '',
