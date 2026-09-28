@@ -44,6 +44,7 @@ export class OrderService {
   private static validOrdersCache: Map<string, { validOrderNos: string[]; timestamp: number }> = new Map();
   private static deptBuyersCache: Map<string, { buyers: string[]; timestamp: number }> = new Map();
   private static deptOrdersDefaultCache: Map<string, { data: IPaginatedOrdersResult; timestamp: number }> = new Map();
+  private static singleOrderCache: Map<string, { data: any; timestamp: number }> = new Map();
   private static CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   public static clearReportCache(): void {
@@ -51,6 +52,7 @@ export class OrderService {
     OrderService.validOrdersCache.clear();
     OrderService.deptBuyersCache.clear();
     OrderService.deptOrdersDefaultCache.clear();
+    OrderService.singleOrderCache.clear();
     clearBuyersCache();
   }
 
@@ -286,10 +288,23 @@ export class OrderService {
     orderNo: string,
     dept?: string
   ): Promise<{ order: IOrder; planData: IOrderDate | null }> {
-    const order = (await Order.findOne({ orderNo }).lean()) as any;
-    if (!order) {
+    const cacheKey = `${orderNo}_${dept || 'all'}`;
+    const cached = OrderService.singleOrderCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 60000) {
+      return cached.data;
+    }
+
+    const [orderRaw, planDataRaw] = await Promise.all([
+      Order.findOne({ orderNo }).lean() as Promise<any>,
+      OrderDate.findOne({ orderNo }).lean() as Promise<any>,
+    ]);
+
+    if (!orderRaw) {
       throw new Error(`Order "${orderNo}" not found.`);
     }
+
+    const order = orderRaw;
+    const planData = planDataRaw;
 
     // Gather department items for comprehensive fallbacks
     const allItems = [
@@ -329,12 +344,14 @@ export class OrderService {
       if (fItem) order.floor = fItem.Floor || fItem.floor || '';
     }
 
-    const planData = await OrderDate.findOne({ orderNo }).lean();
-
-    return {
+    const result = {
       order: order as unknown as IOrder,
       planData: planData as unknown as IOrderDate | null,
     };
+
+    OrderService.singleOrderCache.set(cacheKey, { data: result, timestamp: Date.now() });
+
+    return result;
   }
 
   /**
