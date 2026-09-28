@@ -39,6 +39,12 @@ export class OrderService {
     return buyers;
   }
 
+  private static reportCache: Map<string, { data: any; timestamp: number }> = new Map();
+
+  public static clearReportCache(): void {
+    OrderService.reportCache.clear();
+  }
+
   /**
    * Retrieves buyers present in a specific department's active upload file
    */
@@ -339,6 +345,7 @@ export class OrderService {
       console.warn('Status recalculation warning:', err.message);
     }
 
+    OrderService.clearReportCache();
     return updatedRecord as IOrderDate;
   }
 
@@ -981,6 +988,13 @@ export class OrderService {
     dept: string,
     allowedRawBuyers?: string[]
   ): Promise<{ orders: any[]; planMap: Record<string, any>; total: number }> {
+    const cacheKey = `${dept}_${(allowedRawBuyers || []).sort().join(',')}`;
+    const cached = OrderService.reportCache.get(cacheKey);
+    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes TTL
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      return cached.data;
+    }
+
     const statusField = `${dept}PlanStatus`;
     const itemsField = `${dept}Items`;
 
@@ -989,7 +1003,7 @@ export class OrderService {
       [itemsField]: { $exists: true, $ne: [] },
     };
 
-    const deptValid = await DeptValidOrders.findOne({ dept }).lean();
+    const deptValid = await DeptValidOrders.findOne({ dept }, { validOrderNos: 1 }).lean();
     if (deptValid?.validOrderNos && deptValid.validOrderNos.length > 0) {
       filter.orderNo = { $in: deptValid.validOrderNos };
     }
@@ -998,20 +1012,44 @@ export class OrderService {
       filter.buyer = { $in: allowedRawBuyers };
     }
 
-    const orders = await Order.find(filter).sort({ orderNo: -1 }).lean();
+    // High performance lean projection: only load necessary department fields
+    const projection: Record<string, any> = {
+      orderNo: 1,
+      buyer: 1,
+      bookingDate: 1,
+      knitStart: 1,
+      knitEnd: 1,
+      dyeStart: 1,
+      dyeEnd: 1,
+      deliStart: 1,
+      deliEnd: 1,
+      requiredQtyKgs: 1,
+      [statusField]: 1,
+      [itemsField]: 1,
+    };
+
+    const orders = await Order.find(filter, projection).sort({ orderNo: -1 }).lean();
     const orderNos = orders.map((o) => o.orderNo);
 
-    const planDocs = await OrderDate.find({ orderNo: { $in: orderNos } }).lean();
+    // Only project the requested department's items from OrderDate
+    const planDocs = await OrderDate.find(
+      { orderNo: { $in: orderNos } },
+      { orderNo: 1, [dept]: 1 }
+    ).lean();
+
     const planMap: Record<string, any> = {};
-    planDocs.forEach((p) => {
+    planDocs.forEach((p: any) => {
       planMap[p.orderNo] = p;
     });
 
-    return {
+    const result = {
       orders,
       planMap,
       total: orders.length,
     };
+
+    OrderService.reportCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
   }
 
   /**

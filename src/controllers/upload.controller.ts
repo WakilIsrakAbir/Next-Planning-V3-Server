@@ -7,6 +7,7 @@ import { OrderDate } from '../models/OrderDate.model.js';
 import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
 import { getGridFSBucket } from '../config/gridfs.js';
 import { ExcelParserService } from '../services/excel-parser.service.js';
+import { OrderService } from '../services/order.service.js';
 
 export class UploadController {
   static async uploadFile(req: Request, res: Response): Promise<void> {
@@ -57,6 +58,7 @@ export class UploadController {
       try {
         await ExcelParserService.parseAndStoreExcel(savedName, category || 'General', bucket);
         console.log(`✅ Excel parsed and synced: ${savedName}`);
+        OrderService.clearReportCache();
       } catch (parseErr: any) {
         console.warn('Excel parse warning:', parseErr.message);
       }
@@ -167,6 +169,7 @@ export class UploadController {
           },
         }
       );
+      OrderService.clearReportCache();
       res.status(200).json({ message: 'All saved planning records cleared successfully.' });
     } catch (err: any) {
       res.status(500).json({ message: 'Failed to clear planning data.' });
