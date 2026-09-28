@@ -988,22 +988,23 @@ export class OrderService {
     dept: string,
     allowedRawBuyers?: string[]
   ): Promise<{ orders: any[]; planMap: Record<string, any>; total: number }> {
-    const cacheKey = `${dept}_${(allowedRawBuyers || []).sort().join(',')}`;
+    const actualDept = dept === 'deliveryfloor' ? 'delivery' : dept;
+    const cacheKey = `${actualDept}_${(allowedRawBuyers || []).sort().join(',')}`;
     const cached = OrderService.reportCache.get(cacheKey);
     const CACHE_TTL = 5 * 60 * 1000; // 5 minutes TTL
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       return cached.data;
     }
 
-    const statusField = `${dept}PlanStatus`;
-    const itemsField = `${dept}Items`;
+    const statusField = `${actualDept}PlanStatus`;
+    const itemsField = `${actualDept}Items`;
 
     const filter: Record<string, any> = {
       [statusField]: { $in: ['Confirm', 'Tentative'] },
       [itemsField]: { $exists: true, $ne: [] },
     };
 
-    const deptValid = await DeptValidOrders.findOne({ dept }, { validOrderNos: 1 }).lean();
+    const deptValid = await DeptValidOrders.findOne({ dept: actualDept }, { validOrderNos: 1 }).lean();
     if (deptValid?.validOrderNos && deptValid.validOrderNos.length > 0) {
       filter.orderNo = { $in: deptValid.validOrderNos };
     }
@@ -1023,6 +1024,8 @@ export class OrderService {
       dyeEnd: 1,
       deliStart: 1,
       deliEnd: 1,
+      ydStart: 1,
+      ydEnd: 1,
       requiredQtyKgs: 1,
       [statusField]: 1,
       [itemsField]: 1,
@@ -1034,7 +1037,7 @@ export class OrderService {
     // Only project the requested department's items from OrderDate
     const planDocs = await OrderDate.find(
       { orderNo: { $in: orderNos } },
-      { orderNo: 1, [dept]: 1 }
+      { orderNo: 1, [actualDept]: 1 }
     ).lean();
 
     const planMap: Record<string, any> = {};
