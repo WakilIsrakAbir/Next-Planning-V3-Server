@@ -3,6 +3,7 @@ import { OrderDate, IOrderDate } from '../models/OrderDate.model.js';
 import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
 import { StatusEngineService } from './status-engine.service.js';
 import { escapeRegex } from '../utils/sanitize.js';
+import { clearBuyersCache } from '../middleware/buyer-filter.middleware.js';
 
 export interface IPaginatedOrdersResult {
   orders: any[];
@@ -40,21 +41,44 @@ export class OrderService {
   }
 
   private static reportCache: Map<string, { data: any; timestamp: number }> = new Map();
+  private static validOrdersCache: Map<string, { validOrderNos: string[]; timestamp: number }> = new Map();
+  private static deptBuyersCache: Map<string, { buyers: string[]; timestamp: number }> = new Map();
+  private static CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   public static clearReportCache(): void {
     OrderService.reportCache.clear();
+    OrderService.validOrdersCache.clear();
+    OrderService.deptBuyersCache.clear();
+    clearBuyersCache();
+  }
+
+  public static async getValidOrderNos(dept: string): Promise<string[] | null> {
+    const cached = OrderService.validOrdersCache.get(dept);
+    if (cached && Date.now() - cached.timestamp < OrderService.CACHE_TTL) {
+      return cached.validOrderNos;
+    }
+    const deptValid = await DeptValidOrders.findOne({ dept }, { validOrderNos: 1 }).lean();
+    const validOrderNos = deptValid?.validOrderNos || [];
+    OrderService.validOrdersCache.set(dept, { validOrderNos, timestamp: Date.now() });
+    return validOrderNos;
   }
 
   /**
    * Retrieves buyers present in a specific department's active upload file
    */
   static async getDepartmentBuyers(dept: string, allowedRawBuyers?: string[]): Promise<string[]> {
+    const cacheKey = `${dept}_${(allowedRawBuyers || []).sort().join(',')}`;
+    const cached = OrderService.deptBuyersCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < OrderService.CACHE_TTL) {
+      return cached.buyers;
+    }
+
     const itemsField = `${dept}Items`;
     const filter: Record<string, any> = { [itemsField]: { $exists: true, $ne: [] } };
 
-    const deptValid = await DeptValidOrders.findOne({ dept }).lean();
-    if (deptValid?.validOrderNos && deptValid.validOrderNos.length > 0) {
-      filter.orderNo = { $in: deptValid.validOrderNos };
+    const validOrderNos = await OrderService.getValidOrderNos(dept);
+    if (validOrderNos && validOrderNos.length > 0) {
+      filter.orderNo = { $in: validOrderNos };
     }
 
     if (allowedRawBuyers) {
@@ -62,9 +86,12 @@ export class OrderService {
     }
 
     const buyers = await Order.distinct('buyer', filter);
-    return buyers
+    const sorted = buyers
       .filter((b) => b && b !== 'N/A' && b !== '')
       .sort((a, b) => a.localeCompare(b));
+
+    OrderService.deptBuyersCache.set(cacheKey, { buyers: sorted, timestamp: Date.now() });
+    return sorted;
   }
 
   /**
@@ -153,9 +180,9 @@ export class OrderService {
     const filter: Record<string, any> = {};
 
     // Filter by active uploaded file for this department
-    const deptValid = await DeptValidOrders.findOne({ dept }).lean();
-    if (deptValid?.validOrderNos && deptValid.validOrderNos.length > 0) {
-      filter.orderNo = { $in: deptValid.validOrderNos };
+    const validOrderNos = await OrderService.getValidOrderNos(dept);
+    if (validOrderNos && validOrderNos.length > 0) {
+      filter.orderNo = { $in: validOrderNos };
     }
 
     // Filter by plan status
@@ -214,7 +241,7 @@ export class OrderService {
     const [orders, total, buyerList] = await Promise.all([
       Order.find(filter, projection).sort({ orderNo: -1 }).skip(skip).limit(limitNum).lean(),
       Order.countDocuments(filter),
-      Order.distinct('buyer', { [itemsField]: { $exists: true, $ne: [] } }),
+      OrderService.getDepartmentBuyers(dept, allowedRawBuyers),
     ]);
 
     const formattedBuyers = Array.from(
@@ -503,9 +530,9 @@ export class OrderService {
     // 1. Get Confirmed orders from Order collection
     const orderFilter: Record<string, any> = { [statusField]: 'Confirm' };
 
-    const deptValid = await DeptValidOrders.findOne({ dept: dbDept }).lean();
-    if (deptValid && deptValid.validOrderNos && deptValid.validOrderNos.length > 0) {
-      orderFilter.orderNo = { $in: deptValid.validOrderNos };
+    const validOrderNos = await OrderService.getValidOrderNos(dbDept);
+    if (validOrderNos && validOrderNos.length > 0) {
+      orderFilter.orderNo = { $in: validOrderNos };
     }
 
     if (buyer) orderFilter.buyer = { $regex: escapeRegex(buyer), $options: 'i' };
@@ -1004,9 +1031,9 @@ export class OrderService {
       [itemsField]: { $exists: true, $ne: [] },
     };
 
-    const deptValid = await DeptValidOrders.findOne({ dept: actualDept }, { validOrderNos: 1 }).lean();
-    if (deptValid?.validOrderNos && deptValid.validOrderNos.length > 0) {
-      filter.orderNo = { $in: deptValid.validOrderNos };
+    const validOrderNos = await OrderService.getValidOrderNos(actualDept);
+    if (validOrderNos && validOrderNos.length > 0) {
+      filter.orderNo = { $in: validOrderNos };
     }
 
     if (allowedRawBuyers) {

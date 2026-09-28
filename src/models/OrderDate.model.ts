@@ -62,4 +62,14 @@ const orderDateSchema = new Schema<IOrderDate>(
   { timestamps: true, strict: false }
 );
 
+// Indexes for high-speed tracking and orphaned status queries
+orderDateSchema.index({ orderNo: 1, knittingStatus: 1 });
+orderDateSchema.index({ orderNo: 1, dyeingStatus: 1 });
+orderDateSchema.index({ orderNo: 1, deliveryStatus: 1 });
+orderDateSchema.index({ orderNo: 1, ydStatus: 1 });
+orderDateSchema.index({ 'knittingActual.actualEnd': 1 });
+orderDateSchema.index({ 'dyeingActual.actualEnd': 1 });
+orderDateSchema.index({ 'deliveryActual.actualEnd': 1 });
+orderDateSchema.index({ 'ydActual.actualEnd': 1 });
+
 export const OrderDate: Model<IOrderDate> = mongoose.model<IOrderDate>('OrderDate', orderDateSchema);

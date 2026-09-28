@@ -1,6 +1,22 @@
 import { Request, Response, NextFunction } from 'express';
 import { Order } from '../models/Order.model.js';
 
+let cachedRawBuyers: { buyers: string[]; timestamp: number } | null = null;
+const BUYERS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+export function clearBuyersCache(): void {
+  cachedRawBuyers = null;
+}
+
+async function getCachedRawBuyers(): Promise<string[]> {
+  if (cachedRawBuyers && Date.now() - cachedRawBuyers.timestamp < BUYERS_CACHE_TTL) {
+    return cachedRawBuyers.buyers;
+  }
+  const buyers = await Order.distinct('buyer');
+  cachedRawBuyers = { buyers, timestamp: Date.now() };
+  return buyers;
+}
+
 export async function buyerFilterMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     // 1. Admin users have unrestricted access across all buyers
@@ -11,7 +27,7 @@ export async function buyerFilterMiddleware(req: Request, res: Response, next: N
         } else {
           const ids = String(req.query.allowedBuyers).split(',').map((x) => x.trim()).filter(Boolean);
           if (ids.length > 0) {
-            const rawBuyers = await Order.distinct('buyer');
+            const rawBuyers = await getCachedRawBuyers();
             const allowedNames = rawBuyers.filter((b) => {
               const id = String(b).toLowerCase().replace(/[^a-z0-9]/g, '');
               return ids.includes(id);
@@ -31,7 +47,7 @@ export async function buyerFilterMiddleware(req: Request, res: Response, next: N
       req.allowedRawBuyers = ['_NONE_'];
     } else {
       // accessType === 'selected'
-      const rawBuyers = await Order.distinct('buyer');
+      const rawBuyers = await getCachedRawBuyers();
       const allowedNames = rawBuyers.filter((b) => {
         const id = String(b).toLowerCase().replace(/[^a-z0-9]/g, '');
         return buyerPerms.buyerIds?.includes(id);
