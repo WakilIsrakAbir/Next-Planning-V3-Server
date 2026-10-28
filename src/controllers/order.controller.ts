@@ -142,7 +142,8 @@ export class OrderController {
   static async getReport(req: Request, res: Response): Promise<void> {
     try {
       const dept = String(req.params.dept);
-      const result = await OrderService.getReportData(dept, req.allowedRawBuyers);
+      const includePending = String(req.query.includePending || '') === 'true';
+      const result = await OrderService.getReportData(dept, req.allowedRawBuyers, includePending);
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ message: 'Failed to fetch report data.' });
@@ -153,8 +154,13 @@ export class OrderController {
     try {
       const dept = String(req.params.dept);
       const buffer = await ReportExportService.generateDepartmentReport(dept, req.allowedRawBuyers);
+      if (!buffer) {
+        res.status(404).json({ message: 'No data to export' });
+        return;
+      }
+      const dateStr = new Date().toISOString().split('T')[0];
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="${dept}-report-${Date.now()}.xlsx"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${dept.toUpperCase()}_Report_${dateStr}.xlsx"`);
       res.send(buffer);
     } catch (err: any) {
       res.status(500).json({ message: 'Failed to export report Excel.' });

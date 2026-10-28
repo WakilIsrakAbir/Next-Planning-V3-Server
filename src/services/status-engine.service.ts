@@ -3,7 +3,11 @@ import { OrderDate } from '../models/OrderDate.model.js';
 
 export class StatusEngineService {
   /**
-   * Recalculates plan statuses across all orders based on saved OrderDate plans
+   * Recalculates plan statuses across all orders based on saved OrderDate plans.
+   * Same rules as the old backend's upload.js recalcPlanStatuses (commit ebdc4c8): Delivery reads
+   * the floor plan type first, and an item whose plan type is empty, 'Select' or 'Pending' keeps the
+   * department Pending. A department upload has already synchronized OrderDate with the file's items
+   * (ExcelParserService.processDeptFile), so the saved items are the active ones.
    */
   static async recalcAllPlanStatuses(): Promise<number> {
     try {
@@ -24,6 +28,8 @@ export class StatusEngineService {
         }
       ).lean();
 
+      if (plans.length === 0) return 0;
+
       const bulkOps: any[] = [];
       const depts = ['knitting', 'dyeing', 'finishing', 'delivery', 'yd'] as const;
 
@@ -42,12 +48,13 @@ export class StatusEngineService {
             let confirmCount = 0;
 
             items.forEach((item: any) => {
-              const planType = item.planType;
-              if (!planType || planType === '' || planType === 'Select') {
+              const pType =
+                dept === 'delivery' ? item.floorPlanType || item.planType || '' : item.planType || '';
+              if (!pType || pType === '' || pType === 'Select' || pType === 'Pending') {
                 hasSelect = true;
-              } else if (planType === 'Tentative') {
+              } else if (pType === 'Tentative') {
                 hasTentative = true;
-              } else if (planType === 'Confirm') {
+              } else if (pType === 'Confirm') {
                 confirmCount++;
               }
             });
@@ -56,7 +63,7 @@ export class StatusEngineService {
               update[`${dept}PlanStatus`] = 'Pending';
             } else if (hasTentative) {
               update[`${dept}PlanStatus`] = 'Tentative';
-            } else if (confirmCount === items.length) {
+            } else if (confirmCount === items.length && items.length > 0) {
               update[`${dept}PlanStatus`] = 'Confirm';
             } else {
               update[`${dept}PlanStatus`] = 'Pending';
@@ -78,6 +85,7 @@ export class StatusEngineService {
         for (let i = 0; i < bulkOps.length; i += 500) {
           await Order.bulkWrite(bulkOps.slice(i, i + 500), { ordered: false });
         }
+        console.log(`  Plan statuses recalculated for ${bulkOps.length} orders`);
       }
 
       return bulkOps.length;

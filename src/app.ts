@@ -7,6 +7,7 @@ import authRoutes from './routes/auth.routes.js';
 import uploadRoutes from './routes/upload.routes.js';
 import dropdownRoutes from './routes/dropdown.routes.js';
 import orderRoutes from './routes/order.routes.js';
+import batchRoutes from './routes/batch.routes.js';
 import { UploadController } from './controllers/upload.controller.js';
 import { authenticateToken } from './middleware/auth.middleware.js';
 import { apiLimiter } from './middleware/rate-limit.middleware.js';
@@ -57,6 +58,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/files', uploadRoutes);
 app.use('/api/dropdowns', dropdownRoutes);
 app.use('/api/orders', orderRoutes);
+// Batch Plan module (Batch Plan, Batch Card, Batch Report and its Setup tables)
+app.use('/api/batch', batchRoutes);
 
 // Global Error Handling Middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
