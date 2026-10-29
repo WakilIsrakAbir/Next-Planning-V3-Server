@@ -23,6 +23,15 @@ export class OrderController {
     }
   }
 
+  static async getDashboardSummary(req: Request, res: Response): Promise<void> {
+    try {
+      const summary = await OrderService.getDashboardSummary(req.allowedRawBuyers);
+      res.status(200).json(summary);
+    } catch (err: any) {
+      res.status(500).json({ message: 'Failed to fetch the dashboard summary.' });
+    }
+  }
+
   static async getAllList(req: Request, res: Response): Promise<void> {
     try {
       const { page = 1, limit = 10, search = '' } = req.query;

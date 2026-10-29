@@ -1,7 +1,7 @@
 {
   "name": "next-planning-v3-server",
   "version": "1.0.0",
-  "description": "Epylion Next Planning V3 Backend - Express TypeScript MVC Architecture",
+  "description": "Next Planning V3 (Textile Planning Solution) backend - Express TypeScript MVC Architecture",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -11,14 +11,13 @@
     "lint": "tsc --noEmit"
   },
   "keywords": [
-    "epylion",
     "planning",
     "textile",
     "express",
     "typescript",
     "mongoose"
   ],
-  "author": "Epylion Group",
+  "author": "Wakil Israk Abir",
   "license": "ISC",
   "dependencies": {
     "bcryptjs": "^3.0.2",

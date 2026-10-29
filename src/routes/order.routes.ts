@@ -13,6 +13,9 @@ router.use(buyerFilterMiddleware);
 router.get('/buyers', OrderController.getBuyers);
 router.get('/buyers/:dept', OrderController.getDeptBuyers);
 
+// Dashboard: plan status counts and number of buyers (read only)
+router.get('/dashboard-summary', OrderController.getDashboardSummary);
+
 // All-orders overview (Order Status & PPI lists)
 router.get('/all-list', OrderController.getAllList);
 

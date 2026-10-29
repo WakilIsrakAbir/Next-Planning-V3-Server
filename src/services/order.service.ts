@@ -14,6 +14,22 @@ export interface IPaginatedOrdersResult {
   buyers?: string[];
 }
 
+/** Plan counts of one department, as the department list tabs count them. */
+export interface IPlanStatusCounts {
+  dept: string;
+  pending: number;
+  tentative: number;
+  confirm: number;
+}
+
+export interface IDashboardSummary {
+  /** Distinct buyers across the five departments' latest files (the buyer tabs of the plan lists). */
+  buyers: number;
+  plans: IPlanStatusCounts[];
+}
+
+const DASHBOARD_DEPTS = ['yd', 'knitting', 'dyeing', 'finishing', 'delivery'];
+
 export class OrderService {
   /**
    * Retrieves unique buyer names scoped to permitted buyers
@@ -45,6 +61,7 @@ export class OrderService {
   private static deptBuyersCache: Map<string, { buyers: string[]; timestamp: number }> = new Map();
   private static deptOrdersDefaultCache: Map<string, { data: IPaginatedOrdersResult; timestamp: number }> = new Map();
   private static singleOrderCache: Map<string, { data: any; timestamp: number }> = new Map();
+  private static dashboardCache: Map<string, { data: IDashboardSummary; timestamp: number }> = new Map();
   private static CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   public static clearReportCache(): void {
@@ -53,6 +70,7 @@ export class OrderService {
     OrderService.deptBuyersCache.clear();
     OrderService.deptOrdersDefaultCache.clear();
     OrderService.singleOrderCache.clear();
+    OrderService.dashboardCache.clear();
     clearBuyersCache();
   }
 
@@ -96,6 +114,58 @@ export class OrderService {
 
     OrderService.deptBuyersCache.set(cacheKey, { buyers: sorted, timestamp: Date.now() });
     return sorted;
+  }
+
+  /**
+   * Dashboard summary: Pending / Tentative / Confirm counts of every department plan and the number of buyers.
+   * Uses the department list filters (latest file, orders with items for the department, permitted buyers), so the
+   * counts match the list tabs. Cached for 60 s and cleared with the other caches when data changes.
+   */
+  static async getDashboardSummary(allowedRawBuyers?: string[]): Promise<IDashboardSummary> {
+    const cacheKey = [...(allowedRawBuyers || [])].sort().join(',');
+    const cached = OrderService.dashboardCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 60000) {
+      return cached.data;
+    }
+
+    const [plans, buyerLists] = await Promise.all([
+      Promise.all(DASHBOARD_DEPTS.map((dept) => OrderService.countPlanStatuses(dept, allowedRawBuyers))),
+      Promise.all(DASHBOARD_DEPTS.map((dept) => OrderService.getDepartmentBuyers(dept, allowedRawBuyers))),
+    ]);
+    const buyers = new Set(
+      buyerLists
+        .flat()
+        .map((b) => String(b).trim().toUpperCase())
+        .filter((b) => b && b !== 'N/A')
+    );
+
+    const data: IDashboardSummary = { buyers: buyers.size, plans };
+    OrderService.dashboardCache.set(cacheKey, { data, timestamp: Date.now() });
+    return data;
+  }
+
+  /** Counts a department's orders per plan status; a missing or empty status counts as Pending (as in the list tabs). */
+  private static async countPlanStatuses(dept: string, allowedRawBuyers?: string[]): Promise<IPlanStatusCounts> {
+    const match: Record<string, any> = { [`${dept}Items`]: { $exists: true, $ne: [] } };
+    const validOrderNos = await OrderService.getValidOrderNos(dept);
+    if (validOrderNos && validOrderNos.length > 0) {
+      match.orderNo = { $in: validOrderNos };
+    }
+    if (allowedRawBuyers) {
+      match.buyer = { $in: allowedRawBuyers };
+    }
+
+    const groups = await Order.aggregate<{ _id: unknown; count: number }>([
+      { $match: match },
+      { $group: { _id: '$' + dept + 'PlanStatus', count: { $sum: 1 } } },
+    ]);
+    const counts: IPlanStatusCounts = { dept, pending: 0, tentative: 0, confirm: 0 };
+    for (const group of groups) {
+      if (group._id === 'Tentative') counts.tentative += group.count;
+      else if (group._id === 'Confirm') counts.confirm += group.count;
+      else if (group._id === 'Pending' || group._id === null || group._id === undefined || group._id === '') counts.pending += group.count;
+    }
+    return counts;
   }
 
   /**

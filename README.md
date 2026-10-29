@@ -1,6 +1,6 @@
 # Next Planning V3 Server
 
-REST API of Epylion Next Planning V3: Excel uploads, orders and planning dates, reports and exports, Dropdown Master,
+REST API of Next Planning V3 (Textile Planning Solution): Excel uploads, orders and planning dates, reports and exports, Dropdown Master,
 users and permissions, and the Batch Plan module. Express 4 + TypeScript (ES modules) + Mongoose 8.
 
 > The database (`abir_group`) is shared with the old backend (Shimul Mama Project). Both apps read and write the same

@@ -42,7 +42,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.get('/', (req: Request, res: Response) => {
   res.status(200).json({
     status: 'online',
-    system: 'Epylion Next Planning V3 API Engine',
+    system: 'Next Planning V3 API Engine',
     timestamp: new Date().toISOString(),
   });
 });
