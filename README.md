@@ -71,6 +71,8 @@ All routes are under `/api` and, except login, need `Authorization: Bearer <toke
 
 ## Deployment (Vercel)
 
-`vercel.json` rewrites every path to `api/index.ts`. Production deploys from the `main` branch.
+`vercel.json` rewrites every path to `api/index.ts` and runs the function in `sin1` (Singapore), next to the MongoDB
+Atlas cluster (AWS ap-southeast-1): every query is a round trip to the database, so the function must run in the same
+region. Production deploys from the `main` branch.
 Vercel buffers at most 4.5 MB of a function response, so `GET /api/batch/state` streams its body in chunks
 (`src/controllers/batch.controller.ts`).
