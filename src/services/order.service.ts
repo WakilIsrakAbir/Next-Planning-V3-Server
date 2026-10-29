@@ -216,28 +216,28 @@ export class OrderService {
     const itemsField = `${dept}Items`;
     filter[itemsField] = { $exists: true, $ne: [] };
 
-    // Filter by buyer
+    // Filter by buyer. The buyer tabs are upper-cased, so the match ignores case (as in the legacy backend).
+    const and: Record<string, any>[] = [];
     if (buyer) {
-      filter.buyer = buyer;
+      const buyerMatch = { $regex: escapeRegex(buyer), $options: 'i' };
+      if (allowedRawBuyers) and.push({ buyer: buyerMatch }, { buyer: { $in: allowedRawBuyers } });
+      else filter.buyer = buyerMatch;
+    } else if (allowedRawBuyers) {
+      filter.buyer = { $in: allowedRawBuyers };
     }
 
-    if (allowedRawBuyers) {
-      if (filter.buyer) {
-        if (!allowedRawBuyers.includes(filter.buyer)) {
-          filter.buyer = '_NONE_';
-        }
-      } else {
-        filter.buyer = { $in: allowedRawBuyers };
-      }
-    }
-
-    // Filter by search query
+    // Filter by search query, within the latest file's orders (as in the legacy backend)
     if (search && search.trim()) {
       const safeSearch = escapeRegex(search.trim());
-      filter.orderNo = exact
-        ? { $regex: `^${safeSearch}$`, $options: 'i' }
-        : { $regex: safeSearch, $options: 'i' };
+      const orderNoMatch = exact ? { $regex: `^${safeSearch}$`, $options: 'i' } : { $regex: safeSearch, $options: 'i' };
+      if (filter.orderNo) {
+        and.push({ orderNo: filter.orderNo }, { orderNo: orderNoMatch });
+        delete filter.orderNo;
+      } else {
+        filter.orderNo = orderNoMatch;
+      }
     }
+    if (and.length) filter.$and = and;
 
     // Projection
     const projection: Record<string, any> = {
