@@ -14,7 +14,7 @@ async function startServer(): Promise<void> {
 
     // 3. Listen on Port
     const server = app.listen(env.PORT, () => {
-      console.log(`🚀 Epylion Next Planning V3 Server running on http://localhost:${env.PORT}`);
+      console.log(`🚀 Next Planning V3 Server running on http://localhost:${env.PORT}`);
     });
 
     // Graceful Shutdown
