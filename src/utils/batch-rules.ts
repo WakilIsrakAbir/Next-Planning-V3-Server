@@ -1,4 +1,4 @@
-/* Batch Plan module: pure helpers shared by routes/batch, the upload service and the status code.
+/* Batch Plan module rules: pure helpers shared by the Batch service and the upload service.
    TypeScript port of the old backend's lib/batch/source.js. Every rule is kept as it was, because both
    apps read and write the same Batch records. */
 

@@ -1,42 +1,16 @@
-import { User } from '../models/User.model.js';
-import { connectDB } from '../config/db.js';
+/* CLI: `npm run seed` creates the default Super Admin when it is missing (the server also does this at startup). */
 import mongoose from 'mongoose';
+import { connectDB } from '../config/db.js';
+import { AuthService } from '../services/auth.service.js';
 
-export async function ensureDefaultAdmin(): Promise<void> {
+(async () => {
   try {
-    const existingAdmin = await User.findOne({ username: 'admin' });
-    if (!existingAdmin) {
-      const defaultAdmin = new User({
-        username: 'admin',
-        password: 'admin123',
-        role: 'Admin',
-        status: 'active',
-        permissions: {
-          buyers: { accessType: 'all' },
-        },
-      });
-      await defaultAdmin.save();
-      console.log('✅ Default Super Admin initialized: username "admin", password "admin123"');
-    } else {
-      console.log('ℹ️ Admin user "admin" already exists.');
-    }
-  } catch (err: any) {
-    console.error('Error seeding default admin:', err.message);
+    await connectDB();
+    await AuthService.ensureDefaultAdmin();
+    await mongoose.disconnect();
+    process.exit(0);
+  } catch (e: any) {
+    console.error('Seed script error:', e.message);
+    process.exit(1);
   }
-}
-
-// Standalone execution support
-if (process.argv[1]?.includes('seed-admin')) {
-  (async () => {
-    try {
-      await connectDB();
-      await ensureDefaultAdmin();
-      await mongoose.disconnect();
-      process.exit(0);
-    } catch (e: any) {
-      console.error('Seed script error:', e.message);
-      process.exit(1);
-    }
-  })();
-}
-
+})();

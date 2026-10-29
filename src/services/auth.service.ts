@@ -135,4 +135,28 @@ export class AuthService {
   static async recordHeartbeat(userId: string): Promise<void> {
     await User.findByIdAndUpdate(userId, { lastActive: new Date() });
   }
+
+  /** Creates the default Super Admin (admin / admin123) when no user named "admin" exists. Runs at startup. */
+  static async ensureDefaultAdmin(): Promise<void> {
+    try {
+      const existingAdmin = await User.findOne({ username: 'admin' });
+      if (!existingAdmin) {
+        const defaultAdmin = new User({
+          username: 'admin',
+          password: 'admin123',
+          role: 'Admin',
+          status: 'active',
+          permissions: {
+            buyers: { accessType: 'all' },
+          },
+        });
+        await defaultAdmin.save();
+        console.log('✅ Default Super Admin initialized: username "admin", password "admin123"');
+      } else {
+        console.log('ℹ️ Admin user "admin" already exists.');
+      }
+    } catch (err: any) {
+      console.error('Error seeding default admin:', err.message);
+    }
+  }
 }
