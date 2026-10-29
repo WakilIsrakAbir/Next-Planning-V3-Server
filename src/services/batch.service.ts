@@ -91,11 +91,16 @@ async function unitOptions(): Promise<{ name: string; status: string }[]> {
     .filter((unit) => unit.name);
 }
 
-// Every buyer in the uploaded orders, once, for Unit Setup.
+/* Unit Setup buyers, once each: the buyers of the orders in the latest uploaded files (General and the
+   department files, as DeptValidOrders lists them). Orders of older uploads stay in the database, so their
+   buyers are left out here. Before any file list exists (or after Clear All), every buyer, as before. */
+const UPLOAD_FILES = ['general', 'yd', 'knitting', 'dyeing', 'finishing', 'delivery'];
 const NOT_A_BUYER = new Set(['', 'UNDEFINED', 'N/A', 'GENERAL', 'PENDING', 'UNKNOWN']);
 async function buyerNames(): Promise<string[]> {
+  const lists = await DeptValidOrders.find({ dept: { $in: UPLOAD_FILES } }, { validOrderNos: 1 }).lean();
+  const orderNos = Array.from(new Set(lists.flatMap((list) => list.validOrderNos || [])));
   const names = new Map<string, string>();
-  for (const value of await Order.distinct('buyer')) {
+  for (const value of await Order.distinct('buyer', orderNos.length ? { orderNo: { $in: orderNos } } : {})) {
     const name = String(value ?? '')
       .trim()
       .replace(/\s+/g, ' ');
@@ -377,7 +382,8 @@ export class BatchService {
       cards,
       // The unit tabs in the page heading, [{key, label}].
       batchUnits,
-      // Unit Setup page: the Dropdown Master units and every buyer (buyers only for users who can edit Unit Setup).
+      // Unit Setup page: the Dropdown Master units and the buyers of the latest uploaded files (buyers only for
+      // users who can edit Unit Setup).
       units,
       buyers,
     });
