@@ -23,7 +23,7 @@ const batchPlanSchema = new Schema<IBatchPlan>(
     stateJson: { type: String, default: '{}' },
     version: { type: Number, default: 0 },
     updatedBy: { type: String, default: '' },
-    // Units this plan keeps in the sidebar (lib/batch/source.ts planRetainedUnits), as of retainedVersion.
+    // Units this plan keeps in the sidebar (utils/batch-rules.ts planRetainedUnits), as of retainedVersion.
     retainedUnits: { type: [String], default: undefined },
     retainedVersion: { type: Number },
   },

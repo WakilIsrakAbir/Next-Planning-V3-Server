@@ -1,8 +1,8 @@
 /* Default Setup tables of the Batch Plan module: INITIAL_MACHINE_SETUP (Dyeing MC), INITIAL_FLAT_ALLOWANCE
    and INITIAL_UNIT_SETUP. Copied unchanged from the old backend's lib/batch/setup-defaults.js.
-   routes/batch writes them only into a Setup table that does not exist yet or that no user has saved.
-   The page keeps identical copies in public/batch/batch-app.js. */
-import type { BatchSettingKey } from '../../models/BatchSetting.model.js';
+   The Batch service writes them only into a Setup table that does not exist yet or that no user has saved.
+   The client keeps identical copies in src/features/batch/constants.ts. */
+import type { BatchSettingKey } from '../models/BatchSetting.model.js';
 
 export const SETUP_DEFAULTS: Record<BatchSettingKey, Record<string, unknown>[]> = {
  "setup": [

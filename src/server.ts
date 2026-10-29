@@ -1,7 +1,7 @@
 import app from './app.js';
 import { env } from './config/env.js';
 import { connectDB } from './config/db.js';
-import { ensureDefaultAdmin } from './scripts/seed-admin.js';
+import { AuthService } from './services/auth.service.js';
 
 // Database initialized with abir_group MongoDB cluster
 async function startServer(): Promise<void> {
@@ -10,7 +10,7 @@ async function startServer(): Promise<void> {
     await connectDB();
 
     // 2. Seed initial Super Admin if not present
-    await ensureDefaultAdmin();
+    await AuthService.ensureDefaultAdmin();
 
     // 3. Listen on Port
     const server = app.listen(env.PORT, () => {

@@ -8,7 +8,7 @@ import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
 import { BatchBpData } from '../models/BatchBpData.model.js';
 import { BatchPlan } from '../models/BatchPlan.model.js';
 import { BatchCard } from '../models/BatchCard.model.js';
-import { can } from '../lib/batch/source.js';
+import { can } from '../utils/batch-rules.js';
 import { getGridFSBucket } from '../config/gridfs.js';
 import { ExcelParserService } from '../services/excel-parser.service.js';
 import { OrderService } from '../services/order.service.js';

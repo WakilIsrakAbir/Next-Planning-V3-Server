@@ -5,7 +5,7 @@ import { Order } from '../models/Order.model.js';
 import { OrderDate } from '../models/OrderDate.model.js';
 import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
 import { BatchBpData } from '../models/BatchBpData.model.js';
-import { bpHeaderError, groupBpRows } from '../lib/batch/source.js';
+import { bpHeaderError, groupBpRows } from '../utils/batch-rules.js';
 import { formatExcelDate } from '../utils/excel-date.js';
 import { buildKeyMap, getVal } from '../utils/normalizer.js';
 import { buildPlanMap, findMatchingPlan, generateBackendItemId } from '../utils/item-matching.js';

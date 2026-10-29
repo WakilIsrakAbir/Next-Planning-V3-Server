@@ -19,7 +19,7 @@ const batchCardSchema = new Schema<IBatchCard>(
     // Card record as JSON text.
     cardJson: { type: String, default: '{}' },
     updatedBy: { type: String, default: '' },
-    // Unit this card keeps in the sidebar, '' for none (lib/batch/source.ts cardRetainedUnit).
+    // Unit this card keeps in the sidebar, '' for none (utils/batch-rules.ts cardRetainedUnit).
     retainedUnit: { type: String },
   },
   { timestamps: true, minimize: false }
