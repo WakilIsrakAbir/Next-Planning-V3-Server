@@ -417,7 +417,13 @@ router.get('/state', requireModuleAccess, async (req: Request, res: Response) =>
       'Timing-Allow-Origin': '*',
       'Cache-Control': 'no-store',
     });
-    res.type('application/json').send(body);
+    // Streamed in parts: on Vercel a buffered function response is limited to 4.5 MB, a streamed one is not,
+    // and this response grows with the number of orders (several MB for about a thousand orders).
+    res.type('application/json');
+    const bytes = Buffer.from(body, 'utf8');
+    const STREAM_CHUNK = 256 * 1024;
+    for (let offset = 0; offset < bytes.length; offset += STREAM_CHUNK) res.write(bytes.subarray(offset, offset + STREAM_CHUNK));
+    res.end();
   } catch (error) {
     console.error('Batch state error:', error);
     res.status(500).json({ message: 'Could not load Batch Plan data.' });
