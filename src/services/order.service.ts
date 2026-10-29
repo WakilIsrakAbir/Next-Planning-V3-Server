@@ -198,9 +198,19 @@ export class OrderService {
       filter.orderNo = { $in: validOrderNos };
     }
 
-    // Filter by plan status
+    // Filter by plan status. "Pending" also covers orders whose status was never set
+    // (field missing, null or empty string), matching the legacy backend.
     const statusField = `${dept}PlanStatus`;
-    filter[statusField] = status;
+    if (status === 'Pending') {
+      filter.$or = [
+        { [statusField]: 'Pending' },
+        { [statusField]: { $exists: false } },
+        { [statusField]: null },
+        { [statusField]: '' },
+      ];
+    } else {
+      filter[statusField] = status;
+    }
 
     // Only return orders that have items for this department
     const itemsField = `${dept}Items`;
@@ -1044,13 +1054,18 @@ export class OrderService {
 
   /**
    * Retrieves full report data for confirmed and tentative orders
+   * (plus Pending for YD / Delivery, or for every department when includePending is set)
    */
   static async getReportData(
     dept: string,
-    allowedRawBuyers?: string[]
+    allowedRawBuyers?: string[],
+    includePending: boolean = false
   ): Promise<{ orders: any[]; planMap: Record<string, any>; total: number }> {
     const actualDept = dept === 'deliveryfloor' ? 'delivery' : dept;
-    const cacheKey = `${actualDept}_${(allowedRawBuyers || []).sort().join(',')}`;
+    const cacheKey = `${actualDept}_${includePending ? 'withPending' : 'planned'}_${(allowedRawBuyers || [])
+      .slice()
+      .sort()
+      .join(',')}`;
     const cached = OrderService.reportCache.get(cacheKey);
     const CACHE_TTL = 5 * 60 * 1000; // 5 minutes TTL
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
@@ -1060,8 +1075,25 @@ export class OrderService {
     const statusField = `${actualDept}PlanStatus`;
     const itemsField = `${actualDept}Items`;
 
+    // YD and Delivery always include Pending orders; other departments only when
+    // includePending=true (load calculation). With includePending, orders whose
+    // status was never set (missing / null / "") are treated as Pending too.
+    const allowedStatuses =
+      includePending || actualDept === 'yd' || actualDept === 'delivery'
+        ? ['Confirm', 'Tentative', 'Pending']
+        : ['Confirm', 'Tentative'];
+
     const filter: Record<string, any> = {
-      [statusField]: { $in: ['Confirm', 'Tentative'] },
+      $or: [
+        { [statusField]: { $in: allowedStatuses } },
+        ...(includePending
+          ? [
+              { [statusField]: { $exists: false } },
+              { [statusField]: null },
+              { [statusField]: '' },
+            ]
+          : []),
+      ],
       [itemsField]: { $exists: true, $ne: [] },
     };
 
@@ -1087,10 +1119,16 @@ export class OrderService {
       deliEnd: 1,
       ydStart: 1,
       ydEnd: 1,
+      // Load calculation: last YD date fallback (old backend returned the whole Order document)
+      yarnDate: 1,
       requiredQtyKgs: 1,
       [statusField]: 1,
       [itemsField]: 1,
     };
+    // Load calculation enriches Dyeing / Delivery rows from the uploaded Knitting items
+    if (actualDept === 'dyeing' || actualDept === 'delivery') {
+      projection.knittingItems = 1;
+    }
 
     const orders = await Order.find(filter, projection).sort({ orderNo: -1 }).lean();
     const orderNos = orders.map((o) => o.orderNo);

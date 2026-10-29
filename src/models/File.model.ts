@@ -1,6 +1,7 @@
 import mongoose, { Document, Model, Schema } from 'mongoose';
 
-export type FileCategory = 'General' | 'Knitting' | 'Dyeing' | 'Finishing' | 'Delivery' | 'YD';
+// 'BP' = Batch Plan module BP Data (stored in BatchBpData, never in Order).
+export type FileCategory = 'General' | 'Knitting' | 'Dyeing' | 'Finishing' | 'Delivery' | 'YD' | 'BP';
 
 export interface IFile extends Document {
   originalName: string;
@@ -21,7 +22,7 @@ const fileSchema = new Schema<IFile>(
     role: { type: String, required: true },
     category: {
       type: String,
-      enum: ['General', 'Knitting', 'Dyeing', 'Finishing', 'Delivery', 'YD'],
+      enum: ['General', 'Knitting', 'Dyeing', 'Finishing', 'Delivery', 'YD', 'BP'],
       default: 'General',
     },
     size: { type: Number },

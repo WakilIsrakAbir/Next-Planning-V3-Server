@@ -5,9 +5,22 @@ import { File, FileCategory } from '../models/File.model.js';
 import { Order } from '../models/Order.model.js';
 import { OrderDate } from '../models/OrderDate.model.js';
 import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
+import { BatchBpData } from '../models/BatchBpData.model.js';
+import { BatchPlan } from '../models/BatchPlan.model.js';
+import { BatchCard } from '../models/BatchCard.model.js';
+import { can } from '../lib/batch/source.js';
 import { getGridFSBucket } from '../config/gridfs.js';
 import { ExcelParserService } from '../services/excel-parser.service.js';
 import { OrderService } from '../services/order.service.js';
+
+function removeTempFile(filePath: string | undefined): void {
+  if (!filePath) return;
+  try {
+    fs.unlinkSync(filePath);
+  } catch (_) {
+    /* already removed */
+  }
+}
 
 export class UploadController {
   static async uploadFile(req: Request, res: Response): Promise<void> {
@@ -22,6 +35,22 @@ export class UploadController {
       const savedName = req.file.filename;
 
       const bucket = getGridFSBucket();
+
+      // Batch Plan module: BP Data is checked before anything is saved.
+      if (category === 'BP') {
+        // Same permission the page uses to show the BP Data tab (Admin always allowed).
+        if (!can(req.user, 'actions.uploadBP')) {
+          removeTempFile(req.file.path);
+          res.status(403).json({ message: 'You do not have permission to upload BP Data.' });
+          return;
+        }
+        const bpError = ExcelParserService.bpFileError(req.file.path);
+        if (bpError) {
+          removeTempFile(req.file.path);
+          res.status(400).json({ message: bpError });
+          return;
+        }
+      }
 
       const uploadStream = bucket.openUploadStream(savedName, {
         contentType: req.file.mimetype,
@@ -56,7 +85,7 @@ export class UploadController {
 
       // Parse spreadsheet and store in Order collection
       try {
-        await ExcelParserService.parseAndStoreExcel(savedName, category || 'General', bucket);
+        await ExcelParserService.parseAndStoreExcel(savedName, category || 'General', bucket, originalName);
         console.log(`✅ Excel parsed and synced: ${savedName}`);
         OrderService.clearReportCache();
       } catch (parseErr: any) {
@@ -69,6 +98,7 @@ export class UploadController {
       });
     } catch (err: any) {
       console.error('Upload Error:', err);
+      removeTempFile(req.file?.path);
       res.status(500).json({ message: err.message || 'Server error during file upload.' });
     }
   }
@@ -152,6 +182,10 @@ export class UploadController {
     try {
       await OrderDate.deleteMany({});
       await DeptValidOrders.deleteMany({});
+      // Batch Plan module data (Setup tables are kept)
+      await BatchBpData.deleteMany({});
+      await BatchPlan.deleteMany({});
+      await BatchCard.deleteMany({});
       await Order.updateMany(
         {},
         {
@@ -191,7 +225,12 @@ export class UploadController {
       let processed = 0;
       for (const file of latestFiles) {
         try {
-          await ExcelParserService.parseAndStoreExcel(file.savedName, file.category || 'General', bucket);
+          await ExcelParserService.parseAndStoreExcel(
+            file.savedName,
+            file.category || 'General',
+            bucket,
+            file.originalName
+          );
           processed++;
           console.log(`Migrated: ${file.originalName} (${file.category})`);
         } catch (e: any) {
