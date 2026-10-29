@@ -3,7 +3,9 @@ import { env } from './env.js';
 
 export async function connectDB(): Promise<typeof mongoose> {
   try {
-    const conn = await mongoose.connect(env.MONGO_URI);
+    // On Vercel the indexes already exist in the database; ensuring about 40 of them on every cold start only
+    // delays the first request. Local runs still create missing indexes.
+    const conn = await mongoose.connect(env.MONGO_URI, { autoIndex: !process.env.VERCEL });
     console.log(`✅ MongoDB Connected Successfully: ${conn.connection.host}`);
     return conn;
   } catch (err: any) {
