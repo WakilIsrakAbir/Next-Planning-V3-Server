@@ -20,6 +20,14 @@ export function requireRole(...allowedRoles: Array<'Admin' | 'Approver' | 'Plann
 
 export const requireAdmin = requireRole('Admin');
 
+export function requireAtlasMonitorPermission(req: Request, res: Response, next: NextFunction): void {
+  if (req.user && (req.user.role === 'Admin' || req.user.permissions?.menus?.dataManagement?.atlasMonitor === true)) {
+    next();
+    return;
+  }
+  res.status(403).json({ message: 'Access forbidden: Atlas Monitor permission required.' });
+}
+
 export function requireSetupPermission(req: Request, res: Response, next: NextFunction): void {
   if (req.user && (req.user.role === 'Admin' || req.user.permissions?.menus?.dataManagement?.setup)) {
     next();

@@ -7,6 +7,8 @@ export interface IUserPermissions {
     dataManagement?: {
       upload?: boolean;
       setup?: boolean;
+      view?: boolean;
+      atlasMonitor?: boolean;
     };
     orderPlanning?: {
       yd?: boolean;
