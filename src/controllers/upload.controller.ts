@@ -6,6 +6,7 @@ import { can } from '../utils/batch-rules.js';
 import { getGridFSBucket } from '../config/gridfs.js';
 import { ExcelParserService } from '../services/excel-parser.service.js';
 import { OrderService } from '../services/order.service.js';
+import { FileRetentionService, KEEP_COPIES } from '../services/file-retention.service.js';
 
 function removeTempFile(filePath: string | undefined): void {
   if (!filePath) return;
@@ -42,6 +43,25 @@ export class UploadController {
         if (bpError) {
           removeTempFile(req.file.path);
           res.status(400).json({ message: bpError });
+          return;
+        }
+      }
+
+      // A General or department file without a single order number would change nothing: it is not stored.
+      let orderCount: number | undefined;
+      if (category !== 'BP') {
+        try {
+          orderCount = ExcelParserService.orderRowCount(req.file.path);
+        } catch (readErr: any) {
+          removeTempFile(req.file.path);
+          res.status(400).json({ message: 'Sheet parsing error: ' + readErr.message + '. Nothing was saved.' });
+          return;
+        }
+        if (!orderCount) {
+          removeTempFile(req.file.path);
+          res.status(400).json({
+            message: 'No order numbers were found on the first sheet (OrderNo / BookingNo column). Nothing was saved.',
+          });
           return;
         }
       }
@@ -83,12 +103,28 @@ export class UploadController {
         console.log(`✅ Excel parsed and synced: ${savedName}`);
         OrderService.clearReportCache();
       } catch (parseErr: any) {
-        console.warn('Excel parse warning:', parseErr.message);
+        // The upload is kept in the history as failed: it is never "in use" and nothing is removed for it.
+        console.warn('Excel parse error:', parseErr.message);
+        await File.updateOne({ _id: newFile._id }, { $set: { parseStatus: 'failed', parseError: String(parseErr.message || parseErr) } });
+        res.status(422).json({
+          message: `The file was saved but could not be read: ${parseErr.message}. Please check the file and upload it again.`,
+        });
+        return;
+      }
+      await File.updateOne({ _id: newFile._id }, { $set: { parseStatus: 'ok', ...(orderCount !== undefined ? { orderCount } : {}) } });
+
+      // Keep only the newest copies of this category (the upload history itself is never deleted).
+      let copiesRemoved = 0;
+      try {
+        copiesRemoved = await FileRetentionService.keepLatestCopies(category || 'General');
+      } catch (retentionErr: any) {
+        console.warn('Old file copies were not removed:', retentionErr.message);
       }
 
       res.status(200).json({
         message: 'File uploaded and synchronized successfully!',
         file: newFile,
+        copiesRemoved,
       });
     } catch (err: any) {
       console.error('Upload Error:', err);
@@ -97,10 +133,42 @@ export class UploadController {
     }
   }
 
+  /**
+   * GET /api/files/all - every upload record (the whole history), newest first.
+   * GET /api/files/all?scope=recent - only uploads whose stored copy is kept (the newest of each category),
+   * each marked inUse when it is its category's newest successful upload, plus the history counts.
+   */
   static async getAllFiles(req: Request, res: Response): Promise<void> {
     try {
-      const files = await File.find().sort({ createdAt: -1 }).lean();
-      res.status(200).json(files);
+      if (req.query.scope !== 'recent') {
+        const files = await File.find().sort({ createdAt: -1 }).lean();
+        res.status(200).json(files);
+        return;
+      }
+      const files = await File.find({ blobDeleted: { $ne: true } }).sort({ createdAt: -1, _id: -1 }).lean();
+      const seen = new Set<string>();
+      const inUse = new Set<string>();
+      for (const f of files) {
+        const cat = f.category || 'General';
+        if (f.parseStatus !== 'failed' && !seen.has(cat)) {
+          seen.add(cat);
+          inUse.add(String(f._id));
+        }
+      }
+      const history = await File.aggregate([
+        {
+          $group: {
+            _id: { $ifNull: ['$category', 'General'] },
+            uploads: { $sum: 1 },
+            withoutCopy: { $sum: { $cond: [{ $eq: ['$blobDeleted', true] }, 1, 0] } },
+          },
+        },
+      ]);
+      res.status(200).json({
+        keepPerCategory: KEEP_COPIES,
+        files: files.map((f) => ({ ...f, inUse: inUse.has(String(f._id)) })),
+        history: Object.fromEntries(history.map((h: any) => [h._id, { uploads: h.uploads, withoutCopy: h.withoutCopy }])),
+      });
     } catch (err: any) {
       res.status(500).json({ message: 'Failed to retrieve files.' });
     }
@@ -141,32 +209,39 @@ export class UploadController {
     }
   }
 
+  /**
+   * DELETE /api/files/:id - removes the stored copy of one upload (Admin or actions.deleteFiles).
+   * The upload record stays as history and no planning data is touched. The upload in use (its category's
+   * newest successful upload) cannot be removed.
+   */
   static async deleteFile(req: Request, res: Response): Promise<void> {
     try {
+      if (!can(req.user, 'actions.deleteFiles')) {
+        res.status(403).json({ message: 'You do not have permission to delete uploaded files.' });
+        return;
+      }
       const fileId = String(req.params.id);
-      const fileRecord = await File.findById(fileId);
-
+      if (!mongoose.isValidObjectId(fileId)) {
+        res.status(404).json({ message: 'File record not found.' });
+        return;
+      }
+      const fileRecord = await File.findById(fileId).lean();
       if (!fileRecord) {
         res.status(404).json({ message: 'File record not found.' });
         return;
       }
-
-      const bucket = getGridFSBucket();
-      try {
-        const gridFSFiles = await mongoose.connection.db!
-          .collection('uploads.files')
-          .find({ filename: fileRecord.savedName })
-          .toArray();
-
-        for (const f of gridFSFiles) {
-          await bucket.delete(f._id);
-        }
-      } catch (gridErr: any) {
-        console.warn('GridFS delete warning:', gridErr.message);
+      if (fileRecord.blobDeleted) {
+        res.status(200).json({ message: 'The stored copy was already removed. The upload history is kept.' });
+        return;
       }
-
-      await File.findByIdAndDelete(fileId);
-      res.status(200).json({ message: 'File deleted successfully.' });
+      if (await FileRetentionService.isInUse(fileRecord as any)) {
+        res.status(409).json({
+          message: `This is the ${fileRecord.category || 'General'} file in use (the latest upload), so it is kept. Upload a newer file first.`,
+        });
+        return;
+      }
+      await FileRetentionService.removeCopy(fileRecord as any, `removed by ${req.user?.username || 'unknown'}`);
+      res.status(200).json({ message: 'The stored copy was removed. The upload history and all planning data stay.' });
     } catch (err: any) {
       res.status(500).json({ message: 'Failed to delete file.' });
     }
