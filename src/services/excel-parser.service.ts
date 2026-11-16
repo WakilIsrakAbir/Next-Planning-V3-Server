@@ -499,6 +499,23 @@ export class ExcelParserService {
     }
   }
 
+  /**
+   * Rows with an order number on the first sheet of a General or department file on disk, counted the same way
+   * the parser reads them. 0 means the file would change nothing, so it is not stored.
+   */
+  static orderRowCount(filePath: string): number {
+    const wb = XLSX.read(fs.readFileSync(filePath), { type: 'buffer' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    if (!sheet) return 0;
+    const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    let n = 0;
+    for (const row of rows) {
+      const orderNo = String(getVal(row, ['OrderNo', 'BookingNo', 'EWO', 'Booking', 'Order No', 'Booking No'], buildKeyMap(row))).trim();
+      if (orderNo && orderNo !== 'undefined') n++;
+    }
+    return n;
+  }
+
   /* ---------------- Batch Plan module: BP Data ---------------- */
 
   /**
