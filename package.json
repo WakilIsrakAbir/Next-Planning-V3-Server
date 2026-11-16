@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "seed": "tsx src/scripts/seed-admin.ts",
+    "restore-backup": "tsx src/scripts/restore-backup.ts",
     "lint": "tsc --noEmit"
   },
   "keywords": [

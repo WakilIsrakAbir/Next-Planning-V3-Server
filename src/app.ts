@@ -8,6 +8,7 @@ import uploadRoutes from './routes/upload.routes.js';
 import dropdownRoutes from './routes/dropdown.routes.js';
 import orderRoutes from './routes/order.routes.js';
 import batchRoutes from './routes/batch.routes.js';
+import monitorRoutes from './routes/monitor.routes.js';
 import { UploadController } from './controllers/upload.controller.js';
 import { authenticateToken } from './middleware/auth.middleware.js';
 import { apiLimiter } from './middleware/rate-limit.middleware.js';
@@ -33,6 +34,8 @@ app.use(
       return callback(new Error('Blocked by CORS policy: Origin not allowed.'));
     },
     credentials: true,
+    // The backup download's file name (Atlas Monitor) is read by the page from this header.
+    exposedHeaders: ['Content-Disposition'],
   })
 );
 app.use(express.json({ limit: '50mb' }));
@@ -60,6 +63,8 @@ app.use('/api/dropdowns', dropdownRoutes);
 app.use('/api/orders', orderRoutes);
 // Batch Plan module (Batch Plan, Batch Card, Batch Report and its Setup tables)
 app.use('/api/batch', batchRoutes);
+// Atlas Monitor: database health and the full backup download (Data Management > Atlas Monitor)
+app.use('/api/monitor', monitorRoutes);
 
 // Global Error Handling Middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
