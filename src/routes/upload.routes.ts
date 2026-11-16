@@ -25,7 +25,8 @@ router.use(authenticateToken);
 router.post('/upload', upload.single('document'), UploadController.uploadFile);
 router.get('/all', UploadController.getAllFiles);
 router.get('/download/:filename', UploadController.downloadFile);
-router.delete('/clear-all-planning', requireAdmin, UploadController.clearAllPlanning);
+// The "clear-all-planning" total wipe was removed on 16 Nov 2026: it deleted every saved plan in the
+// database V3 shares with the old app, with no way back. A full restore is done from a backup instead.
 router.delete('/:id', UploadController.deleteFile);
 
 // Planning date and migration endpoints

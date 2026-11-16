@@ -2,12 +2,6 @@ import { Request, Response } from 'express';
 import fs from 'fs';
 import mongoose from 'mongoose';
 import { File, FileCategory } from '../models/File.model.js';
-import { Order } from '../models/Order.model.js';
-import { OrderDate } from '../models/OrderDate.model.js';
-import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
-import { BatchBpData } from '../models/BatchBpData.model.js';
-import { BatchPlan } from '../models/BatchPlan.model.js';
-import { BatchCard } from '../models/BatchCard.model.js';
 import { can } from '../utils/batch-rules.js';
 import { getGridFSBucket } from '../config/gridfs.js';
 import { ExcelParserService } from '../services/excel-parser.service.js';
@@ -175,38 +169,6 @@ export class UploadController {
       res.status(200).json({ message: 'File deleted successfully.' });
     } catch (err: any) {
       res.status(500).json({ message: 'Failed to delete file.' });
-    }
-  }
-
-  static async clearAllPlanning(req: Request, res: Response): Promise<void> {
-    try {
-      await OrderDate.deleteMany({});
-      await DeptValidOrders.deleteMany({});
-      // Batch Plan module data (Setup tables are kept)
-      await BatchBpData.deleteMany({});
-      await BatchPlan.deleteMany({});
-      await BatchCard.deleteMany({});
-      await Order.updateMany(
-        {},
-        {
-          $set: {
-            knittingPlanStatus: 'Pending',
-            dyeingPlanStatus: 'Pending',
-            finishingPlanStatus: 'Pending',
-            deliveryPlanStatus: 'Pending',
-            ydPlanStatus: 'Pending',
-            knittingActualEnd: '',
-            dyeingActualEnd: '',
-            finishingActualEnd: '',
-            deliveryActualEnd: '',
-            ydActualEnd: '',
-          },
-        }
-      );
-      OrderService.clearReportCache();
-      res.status(200).json({ message: 'All saved planning records cleared successfully.' });
-    } catch (err: any) {
-      res.status(500).json({ message: 'Failed to clear planning data.' });
     }
   }
 
