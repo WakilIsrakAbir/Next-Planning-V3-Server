@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { OrderService } from '../services/order.service.js';
+import { PlanSaveService } from '../services/plan-save.service.js';
 import { ReportExportService } from '../services/report-export.service.js';
 import { PlanStatus } from '../models/Order.model.js';
+import { HttpError } from '../utils/http-error.js';
 
 // Departments with an Updated / Pending report download
 const REPORT_DEPTS = ['yd', 'knitting', 'dyeing', 'finishing', 'delivery'];
@@ -85,7 +87,9 @@ export class OrderController {
     try {
       const orderNo = String(req.params.orderNo);
       const dept = req.query.dept ? String(req.query.dept) : undefined;
-      const result = await OrderService.getOrderDetails(orderNo, dept);
+      // ?fresh=1 (the order page sends it for a while after a save) skips the 60 s details cache of this instance.
+      const fresh = req.query.fresh === '1';
+      const result = await OrderService.getOrderDetails(orderNo, dept, { fresh });
       res.status(200).json(result);
     } catch (err: any) {
       res.status(404).json({ message: err.message || 'Order not found.' });
@@ -109,6 +113,20 @@ export class OrderController {
       });
     } catch (err: any) {
       res.status(500).json({ message: err.message || 'Server error while saving planning data.' });
+    }
+  }
+
+  /** POST /api/orders/save-plans: several departments of one order in one save (PlanSaveService). */
+  static async savePlans(req: Request, res: Response): Promise<void> {
+    try {
+      res.status(200).json(await PlanSaveService.savePlans(req.body));
+    } catch (err: any) {
+      if (err instanceof HttpError) {
+        res.status(err.statusCode).json(err.toJSON());
+        return;
+      }
+      console.error('Save plans error:', err);
+      res.status(500).json({ message: 'Server error while saving planning data.' });
     }
   }
 

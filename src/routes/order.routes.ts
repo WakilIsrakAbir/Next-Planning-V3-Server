@@ -22,6 +22,8 @@ router.get('/all-list', OrderController.getAllList);
 // Department Planning Endpoints
 router.get('/', OrderController.getDepartmentOrders);
 router.post('/save-dates', OrderController.saveDates);
+// Universal order page: several departments of one order in one save, with a conflict check
+router.post('/save-plans', OrderController.savePlans);
 
 // Plan vs Actual Tracking Endpoints
 router.get('/tracking/:dept', OrderController.getTracking);

@@ -109,6 +109,23 @@ export class StatusEngineService {
       return 'Pending';
     }
 
+    const calculatedStatus = StatusEngineService.computeSaveStatus(dept, fabricItems, orderStatus);
+
+    await Order.updateOne(
+      { orderNo },
+      { $set: { [`${dept}PlanStatus`]: calculatedStatus } }
+    );
+
+    return calculatedStatus;
+  }
+
+  /**
+   * The plan status a saved department gets (save-dates and save-plans): Completed when the Order Status is
+   * Completed; otherwise from the plan types of the saved rows: any blank or 'Select' row gives Pending, else any
+   * 'Tentative' gives Tentative, else all 'Confirm' gives Confirm, else Pending. No rows give Pending. The rule is
+   * the same for every department; Delivery also reads only planType here (an upload reads its floor plan type first).
+   */
+  static computeSaveStatus(dept: string, fabricItems: any[], orderStatus?: string): string {
     let calculatedStatus = 'Pending';
 
     if (orderStatus === 'Completed') {
@@ -130,11 +147,6 @@ export class StatusEngineService {
       else if (confirmCount === fabricItems.length) calculatedStatus = 'Confirm';
       else calculatedStatus = 'Pending';
     }
-
-    await Order.updateOne(
-      { orderNo },
-      { $set: { [`${dept}PlanStatus`]: calculatedStatus } }
-    );
 
     return calculatedStatus;
   }
