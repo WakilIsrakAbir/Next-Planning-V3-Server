@@ -155,7 +155,8 @@ export class OrderController {
     try {
       const dept = String(req.params.dept);
       const includePending = String(req.query.includePending || '') === 'true';
-      const result = await OrderService.getReportData(dept, req.allowedRawBuyers, includePending);
+      const pendingOnly = String(req.query.pendingOnly || '') === 'true';
+      const result = await OrderService.getReportData(dept, req.allowedRawBuyers, includePending, pendingOnly);
       res.status(200).json(result);
     } catch (err: any) {
       res.status(500).json({ message: 'Failed to fetch report data.' });

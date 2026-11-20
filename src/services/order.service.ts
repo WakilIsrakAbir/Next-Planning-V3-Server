@@ -1124,15 +1124,19 @@ export class OrderService {
 
   /**
    * Retrieves full report data for confirmed and tentative orders
-   * (plus Pending for YD / Delivery, or for every department when includePending is set)
+   * (plus Pending for YD / Delivery, or for every department when includePending is set).
+   * With pendingOnly: only the Pending orders, the same orders as the Pending list tab
+   * (Reports page, Pending preview table).
    */
   static async getReportData(
     dept: string,
     allowedRawBuyers?: string[],
-    includePending: boolean = false
+    includePending: boolean = false,
+    pendingOnly: boolean = false
   ): Promise<{ orders: any[]; planMap: Record<string, any>; total: number }> {
     const actualDept = dept === 'deliveryfloor' ? 'delivery' : dept;
-    const cacheKey = `${actualDept}_${includePending ? 'withPending' : 'planned'}_${(allowedRawBuyers || [])
+    const mode = pendingOnly ? 'pendingOnly' : includePending ? 'withPending' : 'planned';
+    const cacheKey = `${actualDept}_${mode}_${(allowedRawBuyers || [])
       .slice()
       .sort()
       .join(',')}`;
@@ -1154,16 +1158,23 @@ export class OrderService {
         : ['Confirm', 'Tentative'];
 
     const filter: Record<string, any> = {
-      $or: [
-        { [statusField]: { $in: allowedStatuses } },
-        ...(includePending
-          ? [
-              { [statusField]: { $exists: false } },
-              { [statusField]: null },
-              { [statusField]: '' },
-            ]
-          : []),
-      ],
+      $or: pendingOnly
+        ? [
+            { [statusField]: 'Pending' },
+            { [statusField]: { $exists: false } },
+            { [statusField]: null },
+            { [statusField]: '' },
+          ]
+        : [
+            { [statusField]: { $in: allowedStatuses } },
+            ...(includePending
+              ? [
+                  { [statusField]: { $exists: false } },
+                  { [statusField]: null },
+                  { [statusField]: '' },
+                ]
+              : []),
+          ],
       [itemsField]: { $exists: true, $ne: [] },
     };
 
@@ -1181,6 +1192,10 @@ export class OrderService {
       orderNo: 1,
       buyer: 1,
       bookingDate: 1,
+      // Reports page preview table: Style and Gmt Unit / Floor columns
+      style: 1,
+      gmtUnit: 1,
+      floor: 1,
       knitStart: 1,
       knitEnd: 1,
       dyeStart: 1,
