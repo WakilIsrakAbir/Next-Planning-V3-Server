@@ -27,9 +27,10 @@ router.post('/save-dates', OrderController.saveDates);
 router.get('/tracking/:dept', OrderController.getTracking);
 router.get('/tracking-download/:dept', OrderController.downloadTrackingExcel);
 
-// Department Confirmed/Tentative Reports
+// Department Confirmed/Tentative Reports, and the Pending orders report
 router.get('/report/:dept', OrderController.getReport);
 router.get('/report-download/:dept', OrderController.downloadReportExcel);
+router.get('/pending-download/:dept', OrderController.downloadPendingReportExcel);
 
 // 5-Month Load Calculation Download
 router.get('/load-download/:type', OrderController.downloadLoadExcel);
