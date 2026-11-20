@@ -58,23 +58,27 @@ export interface GuideLead {
 
 const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const NUMBER_TEXT = /^\d+(\.\d+)?$/;
-/** An Excel date serial is accepted from 25000 (1968) to 70000 (2091), as in the uploads (src/utils/excel-date.ts). */
-const EXCEL_SERIAL_MIN = 25000;
-const EXCEL_SERIAL_MAX = 70000;
+/**
+ * An Excel date serial is accepted exactly as the uploads accept it (src/utils/excel-date.ts, `val > 25000 &&
+ * val < 70000`): greater than 25000 and less than 70000, so 25000 and 70000 themselves are not dates.
+ */
+const EXCEL_SERIAL_ABOVE = 25000;
+const EXCEL_SERIAL_BELOW = 70000;
 /** Excel serial of 1970-01-01. */
 const EXCEL_UNIX_EPOCH = 25569;
 const DAY_MS = 86400 * 1000;
 
 function excelSerialToIsoDay(serial: number): string {
-  if (!Number.isFinite(serial) || serial < EXCEL_SERIAL_MIN || serial > EXCEL_SERIAL_MAX) return '';
+  if (!Number.isFinite(serial) || !(serial > EXCEL_SERIAL_ABOVE && serial < EXCEL_SERIAL_BELOW)) return '';
   return new Date(Math.round((serial - EXCEL_UNIX_EPOCH) * DAY_MS)).toISOString().slice(0, 10);
 }
 
 /**
  * A T&A or guide value as 'YYYY-MM-DD', or '' when it is not a date:
  * - a 'YYYY-MM-DD' string of a real calendar day is returned as it is ('2026-02-30' is not one);
- * - an Excel date serial from 25000 to 70000, as a number or a numeric string, is converted;
- * - anything else ('', '-', 'N/A', 'TBA', '10/02/2026', null, ...) gives ''.
+ * - an Excel date serial greater than 25000 and less than 70000, as a number or a numeric string ('46297',
+ *   '46297.5'), is converted as the uploads convert it: 25001 gives '1968-06-12' and 69999 gives '2091-08-24';
+ * - anything else ('', '-', 'N/A', 'TBA', '10/02/2026', 25000, '70000', null, ...) gives ''.
  */
 export function toIsoDay(value: unknown): string {
   if (typeof value === 'number') return excelSerialToIsoDay(value);

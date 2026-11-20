@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PLAN_CHECK_LIST_DEFAULTS } from '../src/constants/plan-check-list-defaults.js';
+import { formatExcelDate } from '../src/utils/excel-date.js';
 import {
   GUIDE_DATE_KEYS,
   addDaysIso,
@@ -95,18 +96,37 @@ describe.each(ZONES)('dates with TZ=$tz', ({ tz, offsets }) => {
     }
   });
 
-  it('toIsoDay converts Excel date serials (number or numeric text) from 25000 to 70000', () => {
+  it('toIsoDay converts Excel date serials (number or numeric text) above 25000 and below 70000, as the uploads do', () => {
     expect(toIsoDay(46297)).toBe('2026-10-02');
     expect(toIsoDay('46297')).toBe('2026-10-02');
     expect(toIsoDay(46297.75)).toBe('2026-10-02'); // a serial with a time of day
+    expect(toIsoDay('46297.75')).toBe('2026-10-02');
     expect(toIsoDay(45658)).toBe('2025-01-01');
-    expect(toIsoDay(25000)).toBe('1968-06-11');
-    expect(toIsoDay(70000)).toBe('2091-08-25');
-    expect(toIsoDay(24999)).toBe('');
-    expect(toIsoDay(70001)).toBe('');
-    expect(toIsoDay(45)).toBe('');
-    expect(toIsoDay('45')).toBe('');
-    expect(toIsoDay(Number.NaN)).toBe('');
+    // src/utils/excel-date.ts accepts `val > 25000 && val < 70000`: 25000 and 70000 themselves are not dates.
+    const bounds: [number, string][] = [
+      [25000, ''],
+      [25001, '1968-06-12'],
+      [69999, '2091-08-24'],
+      [70000, ''],
+    ];
+    for (const [serial, day] of bounds) {
+      expect(toIsoDay(serial), String(serial)).toBe(day);
+      expect(toIsoDay(String(serial)), `'${serial}'`).toBe(day);
+    }
+    for (const bad of [24999, 70001, 45, '45', '24999', '70001', Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(toIsoDay(bad), String(bad)).toBe('');
+    }
+  });
+
+  it('toIsoDay accepts exactly the serials the uploads convert (formatExcelDate), with the same day', () => {
+    const serials = [24999, 24999.99, 25000, 25000.25, 25000.5, 25001, 46297.75, 69999, 69999.5, 69999.99, 70000, 70000.01, 70001];
+    for (const serial of serials) {
+      const upload = formatExcelDate(serial);
+      const converted = /^\d{4}-\d{2}-\d{2}$/.test(upload);
+      expect(converted, `formatExcelDate(${serial})`).toBe(serial > 25000 && serial < 70000);
+      expect(toIsoDay(serial), String(serial)).toBe(converted ? upload : '');
+      expect(toIsoDay(String(serial)), `'${serial}'`).toBe(converted ? upload : '');
+    }
   });
 
   it("gives the user's example: T&A 2026-10-02..2026-10-21 + Heatset (10/7) = 2026-10-12..2026-10-28", () => {
