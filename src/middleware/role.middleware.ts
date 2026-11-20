@@ -28,6 +28,18 @@ export function requireAtlasMonitorPermission(req: Request, res: Response, next:
   res.status(403).json({ message: 'Access forbidden: Atlas Monitor permission required.' });
 }
 
+/**
+ * Saving the Plan Check List: Admin, or menus.dataManagement.planCheckList ticked (exactly true).
+ * The refusal carries code 'PERMISSION', so the page shows it instead of signing the user out.
+ */
+export function requirePlanCheckListPermission(req: Request, res: Response, next: NextFunction): void {
+  if (req.user && (req.user.role === 'Admin' || req.user.permissions?.menus?.dataManagement?.planCheckList === true)) {
+    next();
+    return;
+  }
+  res.status(403).json({ code: 'PERMISSION', message: 'Access forbidden: Plan Check List permission required.' });
+}
+
 export function requireSetupPermission(req: Request, res: Response, next: NextFunction): void {
   if (req.user && (req.user.role === 'Admin' || req.user.permissions?.menus?.dataManagement?.setup)) {
     next();

@@ -32,3 +32,21 @@ export function getSecondsUntilDhakaMidnight(): IDhakaMidnightResult {
     expiresAt: nextMidnightTimestamp,
   };
 }
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A moment as Bangladesh time (UTC+6, no daylight saving), e.g. '21-Nov-2026 14:05', whatever the server's time zone.
+ * Used in "changed by <user> at <time>" messages. '' for a missing or invalid date.
+ */
+export function formatDhakaDateTime(value: Date | string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '';
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return '';
+  const dhaka = new Date(time + 6 * 60 * 60 * 1000);
+  const two = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${two(dhaka.getUTCDate())}-${MONTHS[dhaka.getUTCMonth()]}-${dhaka.getUTCFullYear()} ` +
+    `${two(dhaka.getUTCHours())}:${two(dhaka.getUTCMinutes())}`
+  );
+}

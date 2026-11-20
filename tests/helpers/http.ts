@@ -25,10 +25,11 @@ export async function startApp(app: Express): Promise<RunningApp> {
 /** Inserts an active user into the test database and returns a bearer token for it (signed with the test secret). */
 export async function createTestUser(
   role: 'Admin' | 'Approver' | 'Planner' | 'Viewer' = 'Admin',
-  username = 'v3t_admin'
+  username = 'v3t_admin',
+  permissions: Record<string, unknown> = {}
 ): Promise<string> {
   const _id = new mongoose.Types.ObjectId();
-  await rawCollection('users').insertOne({ _id, username, password: 'not-used', role, status: 'active', permissions: {} });
+  await rawCollection('users').insertOne({ _id, username, password: 'not-used', role, status: 'active', permissions });
   return jwt.sign({ userId: String(_id), username, role }, TEST_JWT_SECRET, { expiresIn: '1h' });
 }
 
