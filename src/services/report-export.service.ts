@@ -15,17 +15,42 @@ export class ReportExportService {
    * lists Pending orders that have no saved plan yet. Column set and order match the
    * legacy backend's /report-download endpoint.
    *
+   * With `pendingOnly` (legacy /pending-download) the file has only the department's Pending
+   * orders, the same orders as the Pending list tab, with the same columns: a partly planned
+   * order shows its saved plan rows, an order never planned here its uploaded items with blank
+   * plan dates and Plan Type.
+   *
    * Returns null when there is nothing to export.
    */
-  static async generateDepartmentReport(dept: string, allowedRawBuyers?: string[]): Promise<Buffer | null> {
+  static async generateDepartmentReport(
+    dept: string,
+    allowedRawBuyers?: string[],
+    options: { pendingOnly?: boolean } = {}
+  ): Promise<Buffer | null> {
+    const pendingOnly = options.pendingOnly === true;
     const statusField = `${dept}PlanStatus`;
+    const itemsField = `${dept}Items`;
 
-    // Delivery / YD: Pending + Confirm + Tentative. Knitting / Dyeing / Finishing: Confirm + Tentative.
-    const statusList =
-      dept === 'delivery' || dept === 'yd' ? ['Pending', 'Confirm', 'Tentative'] : ['Confirm', 'Tentative'];
-    const filter: Record<string, any> = {
-      [statusField]: { $in: statusList },
-    };
+    let filter: Record<string, any>;
+    if (pendingOnly) {
+      // Same orders as the Pending list tab: status Pending or never set, with items for this department
+      filter = {
+        $or: [
+          { [statusField]: 'Pending' },
+          { [statusField]: { $exists: false } },
+          { [statusField]: null },
+          { [statusField]: '' },
+        ],
+        [itemsField]: { $exists: true, $ne: [] },
+      };
+    } else {
+      // Delivery / YD: Pending + Confirm + Tentative. Knitting / Dyeing / Finishing: Confirm + Tentative.
+      const statusList =
+        dept === 'delivery' || dept === 'yd' ? ['Pending', 'Confirm', 'Tentative'] : ['Confirm', 'Tentative'];
+      filter = {
+        [statusField]: { $in: statusList },
+      };
+    }
 
     // Only include orders from the uploaded file
     const deptValid = await DeptValidOrders.findOne({ dept }).lean();
@@ -81,6 +106,8 @@ export class ReportExportService {
       orderItemProjection.knittingItems = 1;
       orderItemProjection.dyeingItems = 1;
     }
+    // Pending report: an order never planned here has no saved rows, so its uploaded items are needed
+    if (pendingOnly) orderItemProjection[itemsField] = 1;
 
     const allRows: Record<string, any>[] = [];
     const planDocOrderNos = new Set<string>();
@@ -90,15 +117,12 @@ export class ReportExportService {
     for (let i = 0; i < orderNos.length; i += chunkSize) {
       const chunkOrderNos = orderNos.slice(i, i + chunkSize);
 
+      const planDocFilter: Record<string, any> = { orderNo: { $in: chunkOrderNos } };
+      if (!pendingOnly) planDocFilter[dept] = { $exists: true, $ne: [] };
+
       const [planDocsChunk, orderItemsDocs] = await Promise.all([
-        OrderDate.find(
-          {
-            orderNo: { $in: chunkOrderNos },
-            [dept]: { $exists: true, $ne: [] },
-          },
-          planProjection
-        ).lean() as Promise<any[]>,
-        syncLatest
+        OrderDate.find(planDocFilter, planProjection).lean() as Promise<any[]>,
+        syncLatest || pendingOnly
           ? (Order.find({ orderNo: { $in: chunkOrderNos } }, orderItemProjection).lean() as Promise<any[]>)
           : Promise.resolve([] as any[]),
       ]);
@@ -107,16 +131,36 @@ export class ReportExportService {
       const orderKnitMap: Record<string, any[]> = {};
       const orderDyeMap: Record<string, any[]> = {};
       const orderDeliMap: Record<string, any[]> = {};
+      const uploadedItemsMap: Record<string, any[]> = {};
       orderItemsDocs.forEach((d: any) => {
         if (d.knittingItems) orderKnitMap[d.orderNo] = d.knittingItems;
         if (d.dyeingItems) orderDyeMap[d.orderNo] = d.dyeingItems;
         if (d.deliveryItems) orderDeliMap[d.orderNo] = d.deliveryItems;
+        uploadedItemsMap[d.orderNo] = Array.isArray(d[itemsField]) ? d[itemsField] : [];
         if (dept === 'knitting') orderItemsMap[d.orderNo] = d.knittingItems || [];
         else if (dept === 'dyeing') orderItemsMap[d.orderNo] = d.dyeingItems || [];
         else if (dept === 'delivery') orderItemsMap[d.orderNo] = d.deliveryItems || [];
       });
 
-      planDocsChunk.forEach((plan: any) => {
+      let plansToReport: any[] = planDocsChunk;
+      if (pendingOnly) {
+        // Every Pending order gets rows: its saved plan rows when it has some (partly planned),
+        // otherwise its uploaded items as unplanned rows (blank plan dates and Plan Type).
+        const planByOrderNo: Record<string, any> = {};
+        planDocsChunk.forEach((p: any) => {
+          planByOrderNo[p.orderNo] = p;
+        });
+        plansToReport = chunkOrderNos.map((no) => {
+          const saved = planByOrderNo[no];
+          if (saved && Array.isArray(saved[dept]) && saved[dept].length > 0) return saved;
+          return {
+            ...(saved || { orderNo: no }),
+            [dept]: (uploadedItemsMap[no] || []).map((itemData: any) => ({ itemData })),
+          };
+        });
+      }
+
+      plansToReport.forEach((plan: any) => {
         planDocOrderNos.add(plan.orderNo);
         const items: any[] = Array.isArray(plan[dept]) ? plan[dept] : [];
 
@@ -295,6 +339,7 @@ export class ReportExportService {
     }
 
     // 3. Pure Pending items (Delivery only): orders without a saved delivery plan
+    // (In the Pending report every order already got its rows in step 2, so nothing is left here.)
     if (dept === 'delivery') {
       const pendingOrderNos = orderNos.filter((no) => !planDocOrderNos.has(no));
 
@@ -408,7 +453,7 @@ export class ReportExportService {
       }
     }
 
-    XLSX.utils.book_append_sheet(wb, ws, `${dept}_Report`);
+    XLSX.utils.book_append_sheet(wb, ws, pendingOnly ? `${dept}_Pending` : `${dept}_Report`);
 
     return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   }

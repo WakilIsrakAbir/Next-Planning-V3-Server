@@ -3,6 +3,9 @@ import { OrderService } from '../services/order.service.js';
 import { ReportExportService } from '../services/report-export.service.js';
 import { PlanStatus } from '../models/Order.model.js';
 
+// Departments with an Updated / Pending report download
+const REPORT_DEPTS = ['yd', 'knitting', 'dyeing', 'finishing', 'delivery'];
+
 export class OrderController {
   static async getBuyers(req: Request, res: Response): Promise<void> {
     try {
@@ -159,17 +162,32 @@ export class OrderController {
     }
   }
 
+  // Updated report: Confirm + Tentative (YD and Delivery also Pending)
   static async downloadReportExcel(req: Request, res: Response): Promise<void> {
+    await OrderController.sendDepartmentReport(req, res, false);
+  }
+
+  // Pending report: only the department's Pending orders, same columns as the Updated report
+  static async downloadPendingReportExcel(req: Request, res: Response): Promise<void> {
+    await OrderController.sendDepartmentReport(req, res, true);
+  }
+
+  private static async sendDepartmentReport(req: Request, res: Response, pendingOnly: boolean): Promise<void> {
     try {
       const dept = String(req.params.dept);
-      const buffer = await ReportExportService.generateDepartmentReport(dept, req.allowedRawBuyers);
+      if (!REPORT_DEPTS.includes(dept)) {
+        res.status(400).json({ message: 'Unknown department' });
+        return;
+      }
+      const buffer = await ReportExportService.generateDepartmentReport(dept, req.allowedRawBuyers, { pendingOnly });
       if (!buffer) {
         res.status(404).json({ message: 'No data to export' });
         return;
       }
       const dateStr = new Date().toISOString().split('T')[0];
+      const fileName = `${dept.toUpperCase()}_${pendingOnly ? 'Pending_' : ''}Report_${dateStr}.xlsx`;
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="${dept.toUpperCase()}_Report_${dateStr}.xlsx"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
       res.send(buffer);
     } catch (err: any) {
       res.status(500).json({ message: 'Failed to export report Excel.' });
