@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { OrderService } from '../services/order.service.js';
 import { PlanSaveService } from '../services/plan-save.service.js';
+import { PlanGuideService } from '../services/plan-guide.service.js';
 import { ReportExportService } from '../services/report-export.service.js';
 import { PlanStatus } from '../models/Order.model.js';
 import { HttpError } from '../utils/http-error.js';
@@ -127,6 +128,23 @@ export class OrderController {
       }
       console.error('Save plans error:', err);
       res.status(500).json({ message: 'Server error while saving planning data.' });
+    }
+  }
+
+  /**
+   * PUT /api/orders/:orderNo/plan-guide `{yesIds, dates, version?}`: saves the order's Checkpoint & Planning Guide
+   * (any signed-in user) and answers the saved guide.
+   */
+  static async savePlanGuide(req: Request, res: Response): Promise<void> {
+    try {
+      res.status(200).json(await PlanGuideService.save(req.user, String(req.params.orderNo), req.body));
+    } catch (err: any) {
+      if (err instanceof HttpError) {
+        res.status(err.statusCode).json(err.toJSON());
+        return;
+      }
+      console.error('Save plan guide error:', err);
+      res.status(500).json({ message: 'Server error while saving the Planning Guide.' });
     }
   }
 

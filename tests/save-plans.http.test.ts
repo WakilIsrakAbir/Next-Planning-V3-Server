@@ -129,7 +129,8 @@ describe('GET /api/orders/:orderNo', () => {
     await rawCollection('deptvalidorders').insertOne({ dept: 'dyeing', validOrderNos: ['V3T-SOMETHING-ELSE'] });
     const res = await get('/api/orders/V3T-H6?dept=knitting');
     expect(res.status).toBe(200);
-    expect(Object.keys(res.body)).toEqual(['order', 'planData', 'fingerprints', 'deptFlags']);
+    expect(Object.keys(res.body)).toEqual(['order', 'planData', 'fingerprints', 'deptFlags', 'guide']);
+    expect(res.body.guide).toBeNull();
     expect(res.body.planData).toBeNull();
     expect(res.body.fingerprints).toEqual(Object.fromEntries(PLAN_DEPTS.map((d) => [d, UNSAVED_FINGERPRINT])));
     expect(res.body.deptFlags.dyeing).toEqual({ inLatestFile: false, hasItems: true });

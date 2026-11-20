@@ -37,6 +37,9 @@ router.get('/pending-download/:dept', OrderController.downloadPendingReportExcel
 // 5-Month Load Calculation Download
 router.get('/load-download/:type', OrderController.downloadLoadExcel);
 
+// Checkpoint & Planning Guide of one order (universal order page); any signed-in user
+router.put('/:orderNo/plan-guide', OrderController.savePlanGuide);
+
 // Individual Order Details
 router.get('/:orderNo', OrderController.getSingleOrder);
 

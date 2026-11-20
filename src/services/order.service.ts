@@ -1,6 +1,7 @@
 import { Order, IOrder, PlanStatus } from '../models/Order.model.js';
 import { OrderDate, IOrderDate } from '../models/OrderDate.model.js';
 import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
+import { IOrderPlanGuide, OrderPlanGuide } from '../models/OrderPlanGuide.model.js';
 import { StatusEngineService } from './status-engine.service.js';
 import { escapeRegex } from '../utils/sanitize.js';
 import { PLAN_DEPTS, PlanDept, fingerprintAllDepts } from '../utils/plan-fingerprint.js';
@@ -44,6 +45,8 @@ export interface IOrderDetails {
   /** Fingerprint of each department's saved plan; the order page sends them back as save-plans `base`. */
   fingerprints: Record<PlanDept, string>;
   deptFlags: Record<PlanDept, IDeptFlags>;
+  /** The order's saved Checkpoint & Planning Guide, or null before its first save. */
+  guide: IOrderPlanGuide | null;
 }
 
 const DASHBOARD_DEPTS = ['yd', 'knitting', 'dyeing', 'finishing', 'delivery'];
@@ -90,6 +93,14 @@ export class OrderService {
     OrderService.singleOrderCache.clear();
     OrderService.dashboardCache.clear();
     clearBuyersCache();
+  }
+
+  /** Forgets this order's cached details (every `?dept` variant) on this server instance, e.g. after a guide save. */
+  public static clearOrderDetailCache(orderNo: string): void {
+    const prefix = `${orderNo}_`;
+    for (const key of OrderService.singleOrderCache.keys()) {
+      if (key.startsWith(prefix)) OrderService.singleOrderCache.delete(key);
+    }
   }
 
   public static async getValidOrderNos(dept: string): Promise<string[] | null> {
@@ -381,7 +392,7 @@ export class OrderService {
 
   /**
    * Retrieves full details for an individual order with merged planning records.
-   * Also returns the plan fingerprint and the plan-list flags of every department.
+   * Also returns the plan fingerprint and the plan-list flags of every department, and the order's guide.
    * Results are cached for 60 s; `fresh` skips reading that cache (the new result is still cached).
    */
   static async getOrderDetails(
@@ -395,10 +406,11 @@ export class OrderService {
       return cached.data;
     }
 
-    const [orderRaw, planDataRaw, latestFileOrderNos] = await Promise.all([
+    const [orderRaw, planDataRaw, latestFileOrderNos, guide] = await Promise.all([
       Order.findOne({ orderNo }).lean() as Promise<any>,
       OrderDate.findOne({ orderNo }).lean() as Promise<any>,
       Promise.all(PLAN_DEPTS.map((d) => OrderService.getValidOrderNos(d))),
+      OrderPlanGuide.findById(orderNo).lean() as Promise<IOrderPlanGuide | null>,
     ]);
 
     if (!orderRaw) {
@@ -462,6 +474,7 @@ export class OrderService {
       planData: planData as unknown as IOrderDate | null,
       fingerprints: fingerprintAllDepts(planData),
       deptFlags,
+      guide: guide || null,
     };
 
     OrderService.singleOrderCache.set(cacheKey, { data: result, timestamp: Date.now() });

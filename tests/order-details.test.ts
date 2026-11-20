@@ -32,7 +32,8 @@ describe('getOrderDetails', () => {
     OrderService.clearReportCache();
 
     const details = await OrderService.getOrderDetails('V3T-D1', 'knitting');
-    expect(Object.keys(details)).toEqual(['order', 'planData', 'fingerprints', 'deptFlags']);
+    expect(Object.keys(details)).toEqual(['order', 'planData', 'fingerprints', 'deptFlags', 'guide']);
+    expect(details.guide).toBeNull();
     expect(details.order.orderNo).toBe('V3T-D1');
     expect(details.planData!.orderNo).toBe('V3T-D1');
     expect(Object.keys(details.fingerprints)).toEqual([...PLAN_DEPTS]);
