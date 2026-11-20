@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
 import { LOCAL_MONGO, assertLocalUri, rawCollection } from '../helpers/local-mongo.js';
@@ -97,7 +98,7 @@ const PICKS: Pick[] = [
 
 const RAW_READ = { promoteValues: false, promoteLongs: false } as const;
 
-async function extractFromSource(): Promise<GoldenFixtures | null> {
+async function extractFromSource(sourceDb: string): Promise<GoldenFixtures | null> {
   assertLocalUri(LOCAL_MONGO);
   const client = new mongoose.mongo.MongoClient(LOCAL_MONGO, { serverSelectionTimeoutMS: 3000 });
   try {
@@ -106,7 +107,7 @@ async function extractFromSource(): Promise<GoldenFixtures | null> {
     return null;
   }
   try {
-    const db = client.db(SOURCE_DB);
+    const db = client.db(sourceDb);
     if (!(await db.listCollections({ name: 'orderdates' }).hasNext())) return null;
     const orderDates = db.collection('orderdates');
     const orders = db.collection('orders');
@@ -167,10 +168,10 @@ async function extractFromSource(): Promise<GoldenFixtures | null> {
         }
       }
       if (found < pick.count) {
-        throw new Error(`Golden fixtures: only ${found} of ${pick.count} '${pick.label}' orders found in ${SOURCE_DB}.`);
+        throw new Error(`Golden fixtures: only ${found} of ${pick.count} '${pick.label}' orders found in ${sourceDb}.`);
       }
     }
-    return { source: `${SOURCE_DB} on the local test MongoDB`, orders: picked };
+    return { source: `${sourceDb} on the local test MongoDB`, orders: picked };
   } finally {
     await client.close();
   }
@@ -179,17 +180,21 @@ async function extractFromSource(): Promise<GoldenFixtures | null> {
 /**
  * The golden orders: read from tests/golden/local, or extracted from abir_test (read only) on first use.
  * Returns null when neither is available (another machine without the local restore); the golden tests then skip.
+ * `fixtureFile` and `sourceDb` are for the harness's own tests only.
  */
-export async function loadGoldenFixtures(): Promise<GoldenFixtures | null> {
-  if (existsSync(FIXTURE_FILE)) {
-    return JSON.parse(readFileSync(FIXTURE_FILE, 'utf8')) as GoldenFixtures;
+export async function loadGoldenFixtures(
+  options: { fixtureFile?: string; sourceDb?: string } = {}
+): Promise<GoldenFixtures | null> {
+  const fixtureFile = options.fixtureFile ?? FIXTURE_FILE;
+  if (existsSync(fixtureFile)) {
+    return JSON.parse(readFileSync(fixtureFile, 'utf8')) as GoldenFixtures;
   }
-  const fixtures = await extractFromSource();
+  const fixtures = await extractFromSource(options.sourceDb ?? SOURCE_DB);
   if (!fixtures) return null;
-  mkdirSync(LOCAL_DIR, { recursive: true });
-  const tmp = `${FIXTURE_FILE}.${process.pid}.tmp`;
+  mkdirSync(dirname(fixtureFile), { recursive: true });
+  const tmp = `${fixtureFile}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(fixtures, null, 1));
-  renameSync(tmp, FIXTURE_FILE);
+  renameSync(tmp, fixtureFile);
   return fixtures;
 }
 
@@ -201,13 +206,27 @@ export async function seedGoldenOrders(fixtures: GoldenFixtures): Promise<void> 
   if (orderDates.length) await rawCollection('orderdates').insertMany(orderDates);
 }
 
-/** A golden recording: written when missing or with GOLDEN_RECORD=1, otherwise compared. */
+/** A golden recording: compared, and written only with GOLDEN_RECORD=1. */
 export function goldenFile(name: string): string {
   return fileURLToPath(new URL(`./local/${name}`, import.meta.url));
 }
 
+/**
+ * The recorded text to compare with, or null with GOLDEN_RECORD=1 (the test then records the current behaviour).
+ * The golden tests call it only when the real-data fixtures exist (without them and without abir_test they skip).
+ * A missing recording FAILS instead of being recorded: a recording must come from the code before a change, and
+ * recording it silently from changed code would hide that change.
+ */
 export function readGolden(file: string): string | null {
-  return existsSync(file) && process.env.GOLDEN_RECORD !== '1' ? readFileSync(file, 'utf8') : null;
+  if (process.env.GOLDEN_RECORD === '1') return null;
+  if (!existsSync(file)) {
+    throw new Error(
+      `Golden recording missing: ${file}. The golden fixtures exist, so this test compares with a recording and never ` +
+        'records one silently. Record it on purpose, from code whose behaviour is the reference, by running the ' +
+        'golden tests with GOLDEN_RECORD=1 (e.g. GOLDEN_RECORD=1 npx vitest run tests/golden).'
+    );
+  }
+  return readFileSync(file, 'utf8');
 }
 
 export function writeGolden(file: string, text: string): void {
