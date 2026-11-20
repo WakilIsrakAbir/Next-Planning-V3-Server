@@ -60,7 +60,10 @@ export interface IOrderPlanGuide {
   yesIds: string[];
   dates: IGuideDates;
   lead: IGuideLead;
-  /** The Plan Check List at save time (plus, inactive, any Yes criterion it no longer has, to keep its name). */
+  /**
+   * The Plan Check List at save time (plus, inactive, any Yes criterion it no longer has, to keep its name). A removed
+   * criterion is therefore stored as inactive: to tell Removed from Inactive, compare with the current Plan Check List.
+   */
   checks: IGuideCheck[];
   tna: IGuideTna;
   /** The Plan Check List version the lead was computed from. */
