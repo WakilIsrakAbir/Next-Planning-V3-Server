@@ -415,4 +415,29 @@ describe('clearOrderDetailCache', () => {
     expect(await OrderService.getOrderDetails('V3T-A')).not.toBe(a2);
     expect(await OrderService.getOrderDetails('V3T-B', 'knitting')).toBe(b1);
   });
+
+  it("clearing 'A' keeps the keys of an order named 'A_B', and clearing 'A_B' keeps 'A'", async () => {
+    // Cache keys: 'V3T-A_all', 'V3T-A_dyeing', 'V3T-A_B_all', 'V3T-A_B_dyeing', 'V3T-A_B_C_knitting'.
+    for (const orderNo of ['V3T-A', 'V3T-A_B', 'V3T-A_B_C']) await insertGuideOrder(orderNo);
+    const read = (orderNo: string, dept?: string) => OrderService.getOrderDetails(orderNo, dept);
+    const a = [await read('V3T-A'), await read('V3T-A', 'dyeing')];
+    const ab = [await read('V3T-A_B'), await read('V3T-A_B', 'dyeing')];
+    const abc = await read('V3T-A_B_C', 'knitting');
+    expect((ab[0] as any).order.orderNo).toBe('V3T-A_B');
+
+    OrderService.clearOrderDetailCache('V3T-A');
+    expect(await read('V3T-A_B')).toBe(ab[0]);
+    expect(await read('V3T-A_B', 'dyeing')).toBe(ab[1]);
+    expect(await read('V3T-A_B_C', 'knitting')).toBe(abc);
+    const a2 = [await read('V3T-A'), await read('V3T-A', 'dyeing')];
+    expect(a2[0]).not.toBe(a[0]);
+    expect(a2[1]).not.toBe(a[1]);
+
+    OrderService.clearOrderDetailCache('V3T-A_B');
+    expect(await read('V3T-A_B')).not.toBe(ab[0]);
+    expect(await read('V3T-A_B', 'dyeing')).not.toBe(ab[1]);
+    expect(await read('V3T-A')).toBe(a2[0]);
+    expect(await read('V3T-A', 'dyeing')).toBe(a2[1]);
+    expect(await read('V3T-A_B_C', 'knitting')).toBe(abc);
+  });
 });

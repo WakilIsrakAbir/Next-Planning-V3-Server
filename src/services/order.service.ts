@@ -95,11 +95,15 @@ export class OrderService {
     clearBuyersCache();
   }
 
-  /** Forgets this order's cached details (every `?dept` variant) on this server instance, e.g. after a guide save. */
+  /**
+   * Forgets this order's cached details (every `?dept` variant) on this server instance, e.g. after a guide save.
+   * Keys are `${orderNo}_${dept || 'all'}` and the department part never contains '_', so a key belongs to this order
+   * only when nothing after the prefix holds another '_': clearing 'A' keeps the keys of an order named 'A_B'.
+   */
   public static clearOrderDetailCache(orderNo: string): void {
     const prefix = `${orderNo}_`;
     for (const key of OrderService.singleOrderCache.keys()) {
-      if (key.startsWith(prefix)) OrderService.singleOrderCache.delete(key);
+      if (key.startsWith(prefix) && !key.slice(prefix.length).includes('_')) OrderService.singleOrderCache.delete(key);
     }
   }
 
