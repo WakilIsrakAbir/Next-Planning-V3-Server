@@ -12,8 +12,8 @@ import {
 } from '../src/utils/plan-guide-dates.js';
 
 /**
- * src/utils/plan-guide-dates.ts (S3): strict date parsing, calendar-day shifts, the lead rule (D10, per-column
- * maxima) and the guide's default dates (D11). The date rules run under three server time zones; the process time
+ * src/utils/plan-guide-dates.ts (S3): strict date parsing, calendar-day shifts, the lead rule (D10, both values of the
+ * one largest Yes criterion) and the guide's default dates (D11). The date rules run under three server time zones; the process time
  * zone is switched at run time and each block first proves the switch took effect.
  */
 
@@ -155,8 +155,26 @@ describe.each(ZONES)('dates with TZ=$tz', ({ tz, offsets }) => {
   });
 });
 
-describe('computeLead (D10: per-column maxima)', () => {
+describe('computeLead (D10: both values of the one largest criterion)', () => {
   const NONE = { startDays: 0, endDays: 0, startFrom: [], endFrom: [], startFromIds: [], endFromIds: [] };
+  /** The lead taken from one chosen criterion: its two values, and its name and id on both sides. */
+  const fromOne = (id: string, name: string, startDays: number, endDays: number) => ({
+    startDays,
+    endDays,
+    startFrom: [name],
+    endFrom: [name],
+    startFromIds: [id],
+    endFromIds: [id],
+  });
+
+  /** The rule written as a sort: most startDays, then most endDays, then list order; Active Yes criteria only. */
+  const reference = (checks: PlanCheck[], yesIds: string[]) => {
+    const best = checks
+      .map((check, index) => ({ check, index }))
+      .filter(({ check }) => check.active === true && yesIds.includes(check.id))
+      .sort((a, b) => b.check.startDays - a.check.startDays || b.check.endDays - a.check.endDays || a.index - b.index)[0]?.check;
+    return best ? fromOne(best.id, best.name, best.startDays, best.endDays) : NONE;
+  };
 
   it('none: 0/0', () => {
     expect(computeLead(D9, [])).toEqual(NONE);
@@ -165,99 +183,82 @@ describe('computeLead (D10: per-column maxima)', () => {
   });
 
   it('one', () => {
-    expect(computeLead(D9, ['singeing'])).toEqual({
-      startDays: 7,
-      endDays: 7,
-      startFrom: ['Singeing'],
-      endFrom: ['Singeing'],
-      startFromIds: ['singeing'],
-      endFromIds: ['singeing'],
-    });
+    expect(computeLead(D9, ['singeing'])).toEqual(fromOne('singeing', 'Singeing', 7, 7));
   });
 
-  it('A 10/3 + B 8/7 gives +10/+7: start from A, end from B (never the sum)', () => {
-    expect(computeLead([crit('A', 10, 3), crit('B', 8, 7)], ['A', 'B'])).toEqual({
-      startDays: 10,
-      endDays: 7,
-      startFrom: ['A'],
-      endFrom: ['B'],
-      startFromIds: ['A'],
-      endFromIds: ['B'],
-    });
+  it("A 10/3 + B 8/7 gives +10/+3: both values of A, never B's end and never the sum", () => {
+    expect(computeLead([crit('A', 10, 3), crit('B', 8, 7)], ['A', 'B'])).toEqual(fromOne('A', 'A', 10, 3));
+    expect(computeLead([crit('B', 8, 7), crit('A', 10, 3)], ['B', 'A'])).toEqual(fromOne('A', 'A', 10, 3));
+  });
+
+  it('never takes the end from another criterion, however large it is', () => {
+    expect(computeLead([crit('X', 5, 20), crit('Y', 6, 1)], ['X', 'Y'])).toEqual(fromOne('Y', 'Y', 6, 1));
   });
 
   it('Heatset 10/7 + CPB 12/9 gives 12/9', () => {
-    expect(computeLead(D9, ['heatset', 'cpb'])).toEqual({
-      startDays: 12,
-      endDays: 9,
-      startFrom: ['CPB'],
-      endFrom: ['CPB'],
-      startFromIds: ['cpb'],
-      endFromIds: ['cpb'],
-    });
+    expect(computeLead(D9, ['heatset', 'cpb'])).toEqual(fromOne('cpb', 'CPB', 12, 9));
   });
 
-  it('several, with ties: every criterion holding a maximum is named, in list order', () => {
-    expect(computeLead(D9, ['singeing', 'heatset'])).toEqual({
-      startDays: 10,
-      endDays: 7,
-      startFrom: ['Heatset'],
-      endFrom: ['Heatset', 'Singeing'],
-      startFromIds: ['heatset'],
-      endFromIds: ['heatset', 'singeing'],
-    });
-    expect(computeLead(D9, ['yd_post', 'yd_pre'])).toEqual({
-      startDays: 6,
-      endDays: 4,
-      startFrom: ['YD Pre', 'YD Post'],
-      endFrom: ['YD Pre', 'YD Post'],
-      startFromIds: ['yd_pre', 'yd_post'],
-      endFromIds: ['yd_pre', 'yd_post'],
-    });
-    expect(computeLead(D9, D9.map((item) => item.id))).toEqual({
-      startDays: 12,
-      endDays: 9,
-      startFrom: ['CPB'],
-      endFrom: ['CPB', 'Mercerized'],
-      startFromIds: ['cpb'],
-      endFromIds: ['cpb', 'mercerized'],
-    });
+  it('several: the most start days wins, whatever the order of the Yes ids', () => {
+    expect(computeLead(D9, ['singeing', 'heatset'])).toEqual(fromOne('heatset', 'Heatset', 10, 7));
+    expect(computeLead(D9, D9.map((item) => item.id))).toEqual(fromOne('cpb', 'CPB', 12, 9));
+    expect(computeLead(D9, [...D9].reverse().map((item) => item.id))).toEqual(fromOne('cpb', 'CPB', 12, 9));
   });
 
-  it('a Yes criterion of 0/0 alone gives 0/0 and holds both maxima', () => {
-    expect(computeLead(D9, ['peach_brush'])).toEqual({
-      startDays: 0,
-      endDays: 0,
-      startFrom: ['Peach/brush'],
-      endFrom: ['Peach/brush'],
-      startFromIds: ['peach_brush'],
-      endFromIds: ['peach_brush'],
-    });
+  it('ties: the same start days go to more end days, then to the first in the list', () => {
+    // YD Pre (6/4) comes before Semibleach (6/5) in the list, but Semibleach has more end days.
+    expect(computeLead(D9, ['yd_pre', 'semibleach'])).toEqual(fromOne('semibleach', 'Semibleach', 6, 5));
+    // YD Pre and YD Post are both 6/4: the first in the list, whatever the order of the Yes ids.
+    expect(computeLead(D9, ['yd_post', 'yd_pre'])).toEqual(fromOne('yd_pre', 'YD Pre', 6, 4));
+    expect(computeLead([crit('P', 3, 3), crit('Q', 3, 3)], ['Q', 'P'])).toEqual(fromOne('P', 'P', 3, 3));
+  });
+
+  it('a Yes criterion of 0/0 gives 0/0 and is still named', () => {
+    expect(computeLead(D9, ['peach_brush'])).toEqual(fromOne('peach_brush', 'Peach/brush', 0, 0));
+    expect(computeLead(D9, ['subcontract', 'peach_brush'])).toEqual(fromOne('peach_brush', 'Peach/brush', 0, 0));
   });
 
   it('keeps the id when the name changes', () => {
     const renamed = D9.map((item) => (item.id === 'heatset' ? { ...item, name: 'Heat Set' } : item));
-    expect(computeLead(renamed, ['heatset'])).toMatchObject({ startFrom: ['Heat Set'], startFromIds: ['heatset'], endFromIds: ['heatset'] });
+    expect(computeLead(renamed, ['heatset'])).toEqual(fromOne('heatset', 'Heat Set', 10, 7));
   });
 
   it('ignores inactive, unknown, removed and repeated ids', () => {
     const list = D9.map((item) => (item.id === 'cpb' ? { ...item, active: false } : item));
-    expect(computeLead(list, ['cpb', 'heatset', 'no_such_id', 'heatset'])).toEqual({
-      startDays: 10,
-      endDays: 7,
-      startFrom: ['Heatset'],
-      endFrom: ['Heatset'],
-      startFromIds: ['heatset'],
-      endFromIds: ['heatset'],
-    });
+    // CPB (12/9) would be the largest, but it is inactive.
+    expect(computeLead(list, ['cpb', 'heatset', 'no_such_id', 'heatset'])).toEqual(fromOne('heatset', 'Heatset', 10, 7));
     expect(computeLead(list, ['cpb'])).toEqual(NONE);
     // active must be exactly true
     expect(computeLead([{ ...crit('X', 5, 5), active: 'true' as unknown as boolean }], ['X']).startDays).toBe(0);
   });
 
+  it('matches the rule written as a sort, for every Yes combination of the standard list', () => {
+    for (let mask = 0; mask < 1 << D9.length; mask++) {
+      const yesIds = D9.filter((_, index) => mask & (1 << index)).map((item) => item.id);
+      expect(computeLead(D9, yesIds), yesIds.join(',')).toEqual(reference(D9, yesIds));
+    }
+  });
+
+  it('matches the rule written as a sort, for edited lists with ties and inactive criteria', () => {
+    // A fixed pseudo-random sequence (32-bit LCG, high bits), so every run checks the same 500 cases.
+    let seed = 20261121;
+    const next = (n: number) => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return Math.floor((seed / 4294967296) * n);
+    };
+    for (let round = 0; round < 500; round++) {
+      const list = Array.from({ length: 1 + next(7) }, (_, index) =>
+        crit(`c${index}`, next(4) * 3, next(4) * 3, next(5) > 0)
+      );
+      const yesIds = list.filter(() => next(3) > 0).map((check) => check.id);
+      if (next(4) === 0) yesIds.push('no_such_id');
+      expect(computeLead(list, yesIds), JSON.stringify({ list, yesIds })).toEqual(reference(list, yesIds));
+    }
+  });
+
   it('is the lead shown in the badge for the D10 example', () => {
     const lead = computeLead([crit('A', 10, 3), crit('B', 8, 7)], ['B', 'A']);
-    expect(`+${lead.startDays}d / +${lead.endDays}d Checklist Lead Time`).toBe('+10d / +7d Checklist Lead Time');
+    expect(`+${lead.startDays}d / +${lead.endDays}d Checklist Lead Time`).toBe('+10d / +3d Checklist Lead Time');
   });
 });
 

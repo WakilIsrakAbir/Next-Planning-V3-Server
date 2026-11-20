@@ -112,7 +112,7 @@ describe('PUT plan-guide: first save', () => {
     expect(guide.yesIds).toEqual([]);
   });
 
-  it('computes the lead itself from the current Plan Check List (D10), ignoring what the page sends', async () => {
+  it('computes the lead itself from the current Plan Check List (D10: Heatset 10/3 + Singeing 8/7 gives 10/3), ignoring what the page sends', async () => {
     await insertGuideOrder();
     await PlanCheckListService.get(admin);
     const list = PLAN_CHECK_LIST_DEFAULTS.map((item) =>
@@ -129,13 +129,14 @@ describe('PUT plan-guide: first save', () => {
       checklistVersion: 42,
       version: undefined,
     });
+    // Both values come from Heatset, the criterion with the most start days; Singeing's 7 end days are not used.
     expect(guide.lead).toEqual({
       startDays: 10,
-      endDays: 7,
+      endDays: 3,
       startFrom: ['Heatset'],
-      endFrom: ['Singeing'],
+      endFrom: ['Heatset'],
       startFromIds: ['heatset'],
-      endFromIds: ['singeing'],
+      endFromIds: ['heatset'],
     });
     expect(guide.checklistVersion).toBe(2);
     expect(guide.checks).toEqual(list);
