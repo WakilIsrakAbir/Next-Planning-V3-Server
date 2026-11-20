@@ -17,13 +17,15 @@ export interface IGuideDates {
 /**
  * The checklist lead time added to the Knit T&A dates: the largest startDays and, separately, the largest endDays of
  * the Active criteria set to Yes (per-column maxima, never sums). `startFrom` / `endFrom` name the criteria holding
- * each maximum.
+ * each maximum, and `startFromIds` / `endFromIds` are their ids in the same order.
  */
 export interface IGuideLead {
   startDays: number;
   endDays: number;
   startFrom: string[];
   endFrom: string[];
+  startFromIds: string[];
+  endFromIds: string[];
 }
 
 /** A Plan Check List criterion as it was when the guide was saved. */
@@ -105,6 +107,8 @@ const orderPlanGuideSchema = new Schema<IOrderPlanGuide>(
       endDays: { type: Number, default: 0 },
       startFrom: { type: [String], default: [] },
       endFrom: { type: [String], default: [] },
+      startFromIds: { type: [String], default: [] },
+      endFromIds: { type: [String], default: [] },
     },
     checks: { type: [guideCheckSchema], default: [] },
     tna: {

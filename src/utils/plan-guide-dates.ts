@@ -44,13 +44,16 @@ export interface PlanCheck {
 /**
  * The checklist lead time on the Knit row: the largest startDays and, separately, the largest endDays of the Active
  * criteria set to Yes (per-column maxima, never sums). `startFrom` / `endFrom` name the criteria that hold each
- * maximum, in Plan Check List order.
+ * maximum, in Plan Check List order, and `startFromIds` / `endFromIds` are their ids in the same order (a criterion
+ * can be renamed later; its id stays).
  */
 export interface GuideLead {
   startDays: number;
   endDays: number;
   startFrom: string[];
   endFrom: string[];
+  startFromIds: string[];
+  endFromIds: string[];
 }
 
 const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -128,11 +131,15 @@ export function computeLead(
   );
   const startDays = counted.reduce((max, check) => Math.max(max, leadDays(check.startDays)), 0);
   const endDays = counted.reduce((max, check) => Math.max(max, leadDays(check.endDays)), 0);
+  const startHolders = counted.filter((check) => leadDays(check.startDays) === startDays);
+  const endHolders = counted.filter((check) => leadDays(check.endDays) === endDays);
   return {
     startDays,
     endDays,
-    startFrom: counted.filter((check) => leadDays(check.startDays) === startDays).map((check) => check.name),
-    endFrom: counted.filter((check) => leadDays(check.endDays) === endDays).map((check) => check.name),
+    startFrom: startHolders.map((check) => check.name),
+    endFrom: endHolders.map((check) => check.name),
+    startFromIds: startHolders.map((check) => check.id),
+    endFromIds: endHolders.map((check) => check.id),
   };
 }
 

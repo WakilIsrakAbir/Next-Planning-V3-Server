@@ -83,7 +83,7 @@ describe('PUT plan-guide: first save', () => {
       orderNo: ORDER_NO,
       yesIds: ['heatset'],
       dates: DATES,
-      lead: { startDays: 10, endDays: 7, startFrom: ['Heatset'], endFrom: ['Heatset'] },
+      lead: { startDays: 10, endDays: 7, startFrom: ['Heatset'], endFrom: ['Heatset'], startFromIds: ['heatset'], endFromIds: ['heatset'] },
       checks: PLAN_CHECK_LIST_DEFAULTS,
       tna: TNA,
       checklistVersion: 1,
@@ -98,6 +98,7 @@ describe('PUT plan-guide: first save', () => {
       ['_id', 'checks', 'checklistVersion', 'createdAt', 'dates', 'lead', 'orderNo', 'tna', 'updatedAt', 'updatedBy', 'version', 'yesIds'].sort()
     );
     expect(stored!.dates).toEqual(DATES);
+    expect(stored!.lead).toEqual(guide.lead);
     expect(stored!.tna.deliEnd).toBe('TBA'); // raw T&A value
     expect(JSON.parse(JSON.stringify(stored))).toEqual(JSON.parse(JSON.stringify(guide)));
   });
@@ -106,7 +107,7 @@ describe('PUT plan-guide: first save', () => {
     await insertGuideOrder();
     const blank = Object.fromEntries(Object.keys(DATES).map((key) => [key, '']));
     const guide = await PlanGuideService.save(viewer, ORDER_NO, { yesIds: [], dates: blank, version: null });
-    expect(guide.lead).toEqual({ startDays: 0, endDays: 0, startFrom: [], endFrom: [] });
+    expect(guide.lead).toEqual({ startDays: 0, endDays: 0, startFrom: [], endFrom: [], startFromIds: [], endFromIds: [] });
     expect(guide.dates).toEqual(blank);
     expect(guide.yesIds).toEqual([]);
   });
@@ -128,7 +129,14 @@ describe('PUT plan-guide: first save', () => {
       checklistVersion: 42,
       version: undefined,
     });
-    expect(guide.lead).toEqual({ startDays: 10, endDays: 7, startFrom: ['Heatset'], endFrom: ['Singeing'] });
+    expect(guide.lead).toEqual({
+      startDays: 10,
+      endDays: 7,
+      startFrom: ['Heatset'],
+      endFrom: ['Singeing'],
+      startFromIds: ['heatset'],
+      endFromIds: ['singeing'],
+    });
     expect(guide.checklistVersion).toBe(2);
     expect(guide.checks).toEqual(list);
     expect(guide.tna).toEqual(TNA);
@@ -151,7 +159,7 @@ describe('PUT plan-guide: later saves and 409', () => {
     const dates = { ...DATES, knitEnd: '2026-10-30' };
     const guide = await PlanGuideService.save(viewer, ORDER_NO, { yesIds: ['heatset', 'cpb'], dates, version: 1 });
     expect(guide).toMatchObject({ version: 2, yesIds: ['heatset', 'cpb'], dates, updatedBy: 'v3t_viewer' });
-    expect(guide.lead).toEqual({ startDays: 12, endDays: 9, startFrom: ['CPB'], endFrom: ['CPB'] });
+    expect(guide.lead).toEqual({ startDays: 12, endDays: 9, startFrom: ['CPB'], endFrom: ['CPB'], startFromIds: ['cpb'], endFromIds: ['cpb'] });
     expect(await rawCollection('orderplanguides').countDocuments({})).toBe(1);
   });
 
@@ -306,7 +314,14 @@ describe('PUT plan-guide: criteria made Inactive or removed after the guide was 
     expect(customId).toMatch(/^chk_[0-9a-f]{24}$/);
 
     const first = await PlanGuideService.save(planner, ORDER_NO, { yesIds: ['cpb', customId, 'heatset'], dates: DATES });
-    expect(first.lead).toEqual({ startDays: 20, endDays: 15, startFrom: ['Special Wash'], endFrom: ['Special Wash'] });
+    expect(first.lead).toEqual({
+      startDays: 20,
+      endDays: 15,
+      startFrom: ['Special Wash'],
+      endFrom: ['Special Wash'],
+      startFromIds: [customId],
+      endFromIds: [customId],
+    });
 
     // The list then makes CPB inactive and removes Special Wash.
     await PlanCheckListService.save(admin, {
@@ -316,7 +331,14 @@ describe('PUT plan-guide: criteria made Inactive or removed after the guide was 
 
     const again = await PlanGuideService.save(planner, ORDER_NO, { yesIds: ['cpb', customId, 'heatset'], dates: DATES, version: 1 });
     expect(again.yesIds).toEqual(['cpb', customId, 'heatset']);
-    expect(again.lead).toEqual({ startDays: 10, endDays: 7, startFrom: ['Heatset'], endFrom: ['Heatset'] });
+    expect(again.lead).toEqual({
+      startDays: 10,
+      endDays: 7,
+      startFrom: ['Heatset'],
+      endFrom: ['Heatset'],
+      startFromIds: ['heatset'],
+      endFromIds: ['heatset'],
+    });
     expect(again.checklistVersion).toBe(3);
     expect(again.checks.find((check) => check.id === 'cpb')).toEqual({ id: 'cpb', name: 'CPB', startDays: 12, endDays: 9, active: false });
     expect(again.checks.find((check) => check.id === customId)).toEqual({

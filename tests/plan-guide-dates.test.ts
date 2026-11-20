@@ -111,7 +111,14 @@ describe.each(ZONES)('dates with TZ=$tz', ({ tz, offsets }) => {
 
   it("gives the user's example: T&A 2026-10-02..2026-10-21 + Heatset (10/7) = 2026-10-12..2026-10-28", () => {
     const lead = computeLead(D9, ['heatset']);
-    expect(lead).toEqual({ startDays: 10, endDays: 7, startFrom: ['Heatset'], endFrom: ['Heatset'] });
+    expect(lead).toEqual({
+      startDays: 10,
+      endDays: 7,
+      startFrom: ['Heatset'],
+      endFrom: ['Heatset'],
+      startFromIds: ['heatset'],
+      endFromIds: ['heatset'],
+    });
     expect(computeGuideDefaults(ORDER, lead)).toEqual({
       ydStart: '2026-09-28',
       ydEnd: '',
@@ -149,14 +156,23 @@ describe.each(ZONES)('dates with TZ=$tz', ({ tz, offsets }) => {
 });
 
 describe('computeLead (D10: per-column maxima)', () => {
+  const NONE = { startDays: 0, endDays: 0, startFrom: [], endFrom: [], startFromIds: [], endFromIds: [] };
+
   it('none: 0/0', () => {
-    expect(computeLead(D9, [])).toEqual({ startDays: 0, endDays: 0, startFrom: [], endFrom: [] });
-    expect(computeLead(D9, null)).toEqual({ startDays: 0, endDays: 0, startFrom: [], endFrom: [] });
-    expect(computeLead(null, ['heatset'])).toEqual({ startDays: 0, endDays: 0, startFrom: [], endFrom: [] });
+    expect(computeLead(D9, [])).toEqual(NONE);
+    expect(computeLead(D9, null)).toEqual(NONE);
+    expect(computeLead(null, ['heatset'])).toEqual(NONE);
   });
 
   it('one', () => {
-    expect(computeLead(D9, ['singeing'])).toEqual({ startDays: 7, endDays: 7, startFrom: ['Singeing'], endFrom: ['Singeing'] });
+    expect(computeLead(D9, ['singeing'])).toEqual({
+      startDays: 7,
+      endDays: 7,
+      startFrom: ['Singeing'],
+      endFrom: ['Singeing'],
+      startFromIds: ['singeing'],
+      endFromIds: ['singeing'],
+    });
   });
 
   it('A 10/3 + B 8/7 gives +10/+7: start from A, end from B (never the sum)', () => {
@@ -165,11 +181,20 @@ describe('computeLead (D10: per-column maxima)', () => {
       endDays: 7,
       startFrom: ['A'],
       endFrom: ['B'],
+      startFromIds: ['A'],
+      endFromIds: ['B'],
     });
   });
 
   it('Heatset 10/7 + CPB 12/9 gives 12/9', () => {
-    expect(computeLead(D9, ['heatset', 'cpb'])).toEqual({ startDays: 12, endDays: 9, startFrom: ['CPB'], endFrom: ['CPB'] });
+    expect(computeLead(D9, ['heatset', 'cpb'])).toEqual({
+      startDays: 12,
+      endDays: 9,
+      startFrom: ['CPB'],
+      endFrom: ['CPB'],
+      startFromIds: ['cpb'],
+      endFromIds: ['cpb'],
+    });
   });
 
   it('several, with ties: every criterion holding a maximum is named, in list order', () => {
@@ -178,18 +203,41 @@ describe('computeLead (D10: per-column maxima)', () => {
       endDays: 7,
       startFrom: ['Heatset'],
       endFrom: ['Heatset', 'Singeing'],
+      startFromIds: ['heatset'],
+      endFromIds: ['heatset', 'singeing'],
     });
-    expect(computeLead(D9, ['yd_post', 'yd_pre'])).toEqual({ startDays: 6, endDays: 4, startFrom: ['YD Pre', 'YD Post'], endFrom: ['YD Pre', 'YD Post'] });
+    expect(computeLead(D9, ['yd_post', 'yd_pre'])).toEqual({
+      startDays: 6,
+      endDays: 4,
+      startFrom: ['YD Pre', 'YD Post'],
+      endFrom: ['YD Pre', 'YD Post'],
+      startFromIds: ['yd_pre', 'yd_post'],
+      endFromIds: ['yd_pre', 'yd_post'],
+    });
     expect(computeLead(D9, D9.map((item) => item.id))).toEqual({
       startDays: 12,
       endDays: 9,
       startFrom: ['CPB'],
       endFrom: ['CPB', 'Mercerized'],
+      startFromIds: ['cpb'],
+      endFromIds: ['cpb', 'mercerized'],
     });
   });
 
   it('a Yes criterion of 0/0 alone gives 0/0 and holds both maxima', () => {
-    expect(computeLead(D9, ['peach_brush'])).toEqual({ startDays: 0, endDays: 0, startFrom: ['Peach/brush'], endFrom: ['Peach/brush'] });
+    expect(computeLead(D9, ['peach_brush'])).toEqual({
+      startDays: 0,
+      endDays: 0,
+      startFrom: ['Peach/brush'],
+      endFrom: ['Peach/brush'],
+      startFromIds: ['peach_brush'],
+      endFromIds: ['peach_brush'],
+    });
+  });
+
+  it('keeps the id when the name changes', () => {
+    const renamed = D9.map((item) => (item.id === 'heatset' ? { ...item, name: 'Heat Set' } : item));
+    expect(computeLead(renamed, ['heatset'])).toMatchObject({ startFrom: ['Heat Set'], startFromIds: ['heatset'], endFromIds: ['heatset'] });
   });
 
   it('ignores inactive, unknown, removed and repeated ids', () => {
@@ -199,8 +247,10 @@ describe('computeLead (D10: per-column maxima)', () => {
       endDays: 7,
       startFrom: ['Heatset'],
       endFrom: ['Heatset'],
+      startFromIds: ['heatset'],
+      endFromIds: ['heatset'],
     });
-    expect(computeLead(list, ['cpb'])).toEqual({ startDays: 0, endDays: 0, startFrom: [], endFrom: [] });
+    expect(computeLead(list, ['cpb'])).toEqual(NONE);
     // active must be exactly true
     expect(computeLead([{ ...crit('X', 5, 5), active: 'true' as unknown as boolean }], ['X']).startDays).toBe(0);
   });

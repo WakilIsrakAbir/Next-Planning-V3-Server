@@ -55,7 +55,7 @@ describe('PUT /api/orders/:orderNo/plan-guide', () => {
       orderNo: 'V3T-HG1',
       yesIds: ['heatset'],
       dates: DATES,
-      lead: { startDays: 10, endDays: 7, startFrom: ['Heatset'], endFrom: ['Heatset'] },
+      lead: { startDays: 10, endDays: 7, startFrom: ['Heatset'], endFrom: ['Heatset'], startFromIds: ['heatset'], endFromIds: ['heatset'] },
       tna: TNA,
       checklistVersion: 1,
       version: 1,
