@@ -42,10 +42,10 @@ export interface PlanCheck {
 }
 
 /**
- * The checklist lead time on the Knit row: both values of ONE criterion, the largest of the Active criteria set to Yes
- * (see computeLead). `startFrom` / `endFrom` name the criterion each value comes from and `startFromIds` /
- * `endFromIds` give its id (a criterion can be renamed later; its id stays). Under this rule all four name the same
- * chosen criterion; they are empty when no Yes criterion counts.
+ * The checklist lead time on the Knit row: the largest startDays and, separately, the largest endDays of the Active
+ * criteria set to Yes (per-column maxima, never sums). `startFrom` / `endFrom` name the criteria that hold each
+ * maximum, in Plan Check List order, and `startFromIds` / `endFromIds` are their ids in the same order (a criterion
+ * can be renamed later; its id stays).
  */
 export interface GuideLead {
   startDays: number;
@@ -116,39 +116,30 @@ export function addDaysIso(iso: string, days: number): string {
 /** Lead days of a criterion: a positive whole number of days, else 0. */
 const leadDays = (days: unknown): number => Math.max(0, wholeDays(days));
 
-/** True when criterion `a` gives a larger lead than `b`: more start days, or as many start days and more end days. */
-function givesLargerLead(a: PlanCheck, b: PlanCheck): boolean {
-  const aStart = leadDays(a.startDays);
-  const bStart = leadDays(b.startDays);
-  return aStart > bStart || (aStart === bStart && leadDays(a.endDays) > leadDays(b.endDays));
-}
-
 /**
- * The lead time (D10): of the criteria that are Yes AND Active, the ONE largest gives both values. The largest has the
- * most startDays; a tie goes to the one with more endDays, then to the first in Plan Check List order. Values are
- * never summed and never taken from two different criteria. Unknown, removed and inactive ids are ignored; with no
- * such criteria the lead is 0/0.
- * Example: A 10/3 and B 8/7 both Yes gives +10 / +3, both from A.
+ * The lead time (D10): over the criteria that are Yes AND Active, the largest startDays and, separately, the largest
+ * endDays. Unknown, removed and inactive ids are ignored; with no such criteria the lead is 0/0.
+ * Example: A 10/3 and B 8/7 both Yes gives +10 / +7 (startFrom ['A'], endFrom ['B']).
  */
 export function computeLead(
   checks: readonly PlanCheck[] | null | undefined,
   yesIds: readonly string[] | null | undefined
 ): GuideLead {
   const yes = new Set(Array.isArray(yesIds) ? yesIds : []);
-  let chosen: PlanCheck | null = null;
-  for (const check of Array.isArray(checks) ? checks : []) {
-    if (!check || check.active !== true || !yes.has(check.id)) continue;
-    // Only a strictly larger criterion replaces the one found so far, so a full tie keeps the earlier one in the list.
-    if (!chosen || givesLargerLead(check, chosen)) chosen = check;
-  }
-  if (!chosen) return { startDays: 0, endDays: 0, startFrom: [], endFrom: [], startFromIds: [], endFromIds: [] };
+  const counted = (Array.isArray(checks) ? checks : []).filter(
+    (check) => !!check && check.active === true && yes.has(check.id)
+  );
+  const startDays = counted.reduce((max, check) => Math.max(max, leadDays(check.startDays)), 0);
+  const endDays = counted.reduce((max, check) => Math.max(max, leadDays(check.endDays)), 0);
+  const startHolders = counted.filter((check) => leadDays(check.startDays) === startDays);
+  const endHolders = counted.filter((check) => leadDays(check.endDays) === endDays);
   return {
-    startDays: leadDays(chosen.startDays),
-    endDays: leadDays(chosen.endDays),
-    startFrom: [chosen.name],
-    endFrom: [chosen.name],
-    startFromIds: [chosen.id],
-    endFromIds: [chosen.id],
+    startDays,
+    endDays,
+    startFrom: startHolders.map((check) => check.name),
+    endFrom: endHolders.map((check) => check.name),
+    startFromIds: startHolders.map((check) => check.id),
+    endFromIds: endHolders.map((check) => check.id),
   };
 }
 

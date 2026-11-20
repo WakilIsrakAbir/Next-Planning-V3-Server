@@ -15,9 +15,9 @@ export interface IGuideDates {
 }
 
 /**
- * The checklist lead time added to the Knit T&A dates: both values of the one largest Active criterion set to Yes
- * (most startDays, then most endDays, then first in list order; never a sum). `startFrom` / `endFrom` hold that
- * criterion's name and `startFromIds` / `endFromIds` its id; all four are empty when no Yes criterion counts.
+ * The checklist lead time added to the Knit T&A dates: the largest startDays and, separately, the largest endDays of
+ * the Active criteria set to Yes (per-column maxima, never sums). `startFrom` / `endFrom` name the criteria holding
+ * each maximum, and `startFromIds` / `endFromIds` are their ids in the same order.
  */
 export interface IGuideLead {
   startDays: number;
