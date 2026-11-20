@@ -1,0 +1,14 @@
+// Type checking for the tests only: npx tsc -p tests. The build and lint use ../tsconfig.json, which covers src only.
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts", "../src/**/*.ts", "../vitest.config.mts"]
+}

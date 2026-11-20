@@ -32,3 +32,6 @@ Thumbs.db
 .vscode/
 *.sublime-project
 *.sublime-workspace
+
+# Test fixtures and recordings made from real (restored) data: kept on this machine only
+tests/golden/local/
