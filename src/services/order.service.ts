@@ -1,8 +1,10 @@
 import { Order, IOrder, PlanStatus } from '../models/Order.model.js';
 import { OrderDate, IOrderDate } from '../models/OrderDate.model.js';
 import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
+import { IOrderPlanGuide, OrderPlanGuide } from '../models/OrderPlanGuide.model.js';
 import { StatusEngineService } from './status-engine.service.js';
 import { escapeRegex } from '../utils/sanitize.js';
+import { PLAN_DEPTS, PlanDept, fingerprintAllDepts } from '../utils/plan-fingerprint.js';
 import { clearBuyersCache } from '../middleware/buyer-filter.middleware.js';
 
 export interface IPaginatedOrdersResult {
@@ -26,6 +28,25 @@ export interface IDashboardSummary {
   /** Distinct buyers across the five departments' latest files (the buyer tabs of the plan lists). */
   buyers: number;
   plans: IPlanStatusCounts[];
+}
+
+/** Where an order stands for one department's plan list. */
+export interface IDeptFlags {
+  /** The order is in the department's latest file (or that file has no order list), so its plan list shows it. */
+  inLatestFile: boolean;
+  /** The order has rows from the department's file. */
+  hasItems: boolean;
+}
+
+/** GET /api/orders/:orderNo */
+export interface IOrderDetails {
+  order: IOrder;
+  planData: IOrderDate | null;
+  /** Fingerprint of each department's saved plan; the order page sends them back as save-plans `base`. */
+  fingerprints: Record<PlanDept, string>;
+  deptFlags: Record<PlanDept, IDeptFlags>;
+  /** The order's saved Checkpoint & Planning Guide, or null before its first save. */
+  guide: IOrderPlanGuide | null;
 }
 
 const DASHBOARD_DEPTS = ['yd', 'knitting', 'dyeing', 'finishing', 'delivery'];
@@ -72,6 +93,18 @@ export class OrderService {
     OrderService.singleOrderCache.clear();
     OrderService.dashboardCache.clear();
     clearBuyersCache();
+  }
+
+  /**
+   * Forgets this order's cached details (every `?dept` variant) on this server instance, e.g. after a guide save.
+   * Keys are `${orderNo}_${dept || 'all'}` and the department part never contains '_', so a key belongs to this order
+   * only when nothing after the prefix holds another '_': clearing 'A' keeps the keys of an order named 'A_B'.
+   */
+  public static clearOrderDetailCache(orderNo: string): void {
+    const prefix = `${orderNo}_`;
+    for (const key of OrderService.singleOrderCache.keys()) {
+      if (key.startsWith(prefix) && !key.slice(prefix.length).includes('_')) OrderService.singleOrderCache.delete(key);
+    }
   }
 
   public static async getValidOrderNos(dept: string): Promise<string[] | null> {
@@ -362,21 +395,26 @@ export class OrderService {
   }
 
   /**
-   * Retrieves full details for an individual order with merged planning records
+   * Retrieves full details for an individual order with merged planning records.
+   * Also returns the plan fingerprint and the plan-list flags of every department, and the order's guide.
+   * Results are cached for 60 s; `fresh` skips reading that cache (the new result is still cached).
    */
   static async getOrderDetails(
     orderNo: string,
-    dept?: string
-  ): Promise<{ order: IOrder; planData: IOrderDate | null }> {
+    dept?: string,
+    options: { fresh?: boolean } = {}
+  ): Promise<IOrderDetails> {
     const cacheKey = `${orderNo}_${dept || 'all'}`;
-    const cached = OrderService.singleOrderCache.get(cacheKey);
+    const cached = options.fresh ? undefined : OrderService.singleOrderCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 60000) {
       return cached.data;
     }
 
-    const [orderRaw, planDataRaw] = await Promise.all([
+    const [orderRaw, planDataRaw, latestFileOrderNos, guide] = await Promise.all([
       Order.findOne({ orderNo }).lean() as Promise<any>,
       OrderDate.findOne({ orderNo }).lean() as Promise<any>,
+      Promise.all(PLAN_DEPTS.map((d) => OrderService.getValidOrderNos(d))),
+      OrderPlanGuide.findById(orderNo).lean() as Promise<IOrderPlanGuide | null>,
     ]);
 
     if (!orderRaw) {
@@ -424,14 +462,49 @@ export class OrderService {
       if (fItem) order.floor = fItem.Floor || fItem.floor || '';
     }
 
-    const result = {
+    const deptFlags = {} as Record<PlanDept, IDeptFlags>;
+    PLAN_DEPTS.forEach((d, i) => {
+      // A department list without order numbers shows every order (getDepartmentOrders).
+      const latest = latestFileOrderNos[i] || [];
+      const items = order[`${d}Items`];
+      deptFlags[d] = {
+        inLatestFile: latest.length === 0 || latest.includes(orderNo),
+        hasItems: Array.isArray(items) && items.length > 0,
+      };
+    });
+
+    const result: IOrderDetails = {
       order: order as unknown as IOrder,
       planData: planData as unknown as IOrderDate | null,
+      fingerprints: fingerprintAllDepts(planData),
+      deptFlags,
+      guide: guide || null,
     };
 
     OrderService.singleOrderCache.set(cacheKey, { data: result, timestamp: Date.now() });
 
     return result;
+  }
+
+  /**
+   * The OrderDate $set of one department's save: its rows (when sent), `<dept>Status` (when sent and not empty) and
+   * `<dept>CompletedDate` (when sent). save-dates and save-plans both build their writes with it, so they store a
+   * department the same way.
+   */
+  static buildDeptSet(
+    department: string,
+    fabricItems?: any,
+    orderStatus?: string,
+    completedDate?: string
+  ): Record<string, any> {
+    const updateObj: Record<string, any> = {};
+
+    if (fabricItems) updateObj[department] = fabricItems;
+
+    if (orderStatus) updateObj[`${department}Status`] = orderStatus;
+    if (completedDate !== undefined) updateObj[`${department}CompletedDate`] = completedDate;
+
+    return updateObj;
   }
 
   /**
@@ -447,16 +520,13 @@ export class OrderService {
   }): Promise<IOrderDate> {
     const { orderNo, department, fabricItems, orderStatus, completedDate, actualData } = payload;
 
-    const updateObj: Record<string, any> = {};
-
-    if (actualData) {
-      updateObj[department] = actualData;
-    } else if (fabricItems) {
-      updateObj[department] = fabricItems;
-    }
-
-    if (orderStatus) updateObj[`${department}Status`] = orderStatus;
-    if (completedDate !== undefined) updateObj[`${department}CompletedDate`] = completedDate;
+    // A Plan vs Actual (Tracking) save sends actualData, which is stored in place of the rows.
+    const updateObj = OrderService.buildDeptSet(
+      department,
+      actualData ? actualData : fabricItems,
+      orderStatus,
+      completedDate
+    );
 
     const updatedRecord = await OrderDate.findOneAndUpdate(
       { orderNo },

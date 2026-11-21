@@ -9,7 +9,18 @@ export interface IUserPermissions {
       setup?: boolean;
       view?: boolean;
       atlasMonitor?: boolean;
+      /** Data Management > Plan Check List: open and save the list (Admin always may). */
+      planCheckList?: boolean;
     };
+    /** The order plan menus (Sidebar 'Order Management'); the key the apps store. */
+    orderManagement?: {
+      yd?: boolean;
+      knitting?: boolean;
+      dyeing?: boolean;
+      finishing?: boolean;
+      delivery?: boolean;
+    };
+    /** Older typing of the order plan menus; the stored key is orderManagement. Kept so nothing typed against it breaks. */
     orderPlanning?: {
       yd?: boolean;
       knitting?: boolean;

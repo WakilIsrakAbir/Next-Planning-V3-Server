@@ -9,6 +9,7 @@ import dropdownRoutes from './routes/dropdown.routes.js';
 import orderRoutes from './routes/order.routes.js';
 import batchRoutes from './routes/batch.routes.js';
 import monitorRoutes from './routes/monitor.routes.js';
+import planCheckListRoutes from './routes/plan-check-list.routes.js';
 import { UploadController } from './controllers/upload.controller.js';
 import { authenticateToken } from './middleware/auth.middleware.js';
 import { apiLimiter } from './middleware/rate-limit.middleware.js';
@@ -65,6 +66,8 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/batch', batchRoutes);
 // Atlas Monitor: database health and the full backup download (Data Management > Atlas Monitor)
 app.use('/api/monitor', monitorRoutes);
+// Plan Check List (Data Management > Plan Check List): read by every signed-in user, saved with its permission
+app.use('/api/plan-check-list', planCheckListRoutes);
 
 // Global Error Handling Middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
