@@ -64,6 +64,7 @@ export class OrderController {
         search = '',
         exact = 'false',
         populateItems = 'false',
+        scope = '',
       } = req.query;
 
       const result = await OrderService.getDepartmentOrders({
@@ -75,6 +76,8 @@ export class OrderController {
         search: String(search),
         exact: exact === 'true',
         populateItems: populateItems === 'true',
+        // scope=all: the search covers every status list, and each order carries its status
+        allStatuses: scope === 'all',
         allowedRawBuyers: req.allowedRawBuyers,
       });
 

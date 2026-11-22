@@ -37,10 +37,12 @@ const normalise = (value: unknown): string => (value === undefined || value === 
  * deterministic JSON of its status and the plan fields of its rows. GET /api/orders/:orderNo returns it for every
  * department, and save-plans compares it with the `base` a page sends, to detect a save made in between by someone
  * else (another user, V2 or a file upload).
+ * The department's V3 extras (`planExtras.<dept>`) are part of it only when they hold at least one non-empty value,
+ * so a department without extras keeps the fingerprint it had before extras existed.
  */
 export function fingerprintDept(planDoc: Record<string, any> | null | undefined, dept: string): string {
   const rows = planDoc?.[dept];
-  const content = {
+  const content: Record<string, unknown> = {
     status: normalise(planDoc?.[`${dept}Status`]),
     items: (Array.isArray(rows) ? rows : []).map((item: any) => {
       const fields: Record<string, string> = {};
@@ -49,7 +51,31 @@ export function fingerprintDept(planDoc: Record<string, any> | null | undefined,
       return fields;
     }),
   };
+  const extras = normaliseExtras(planDoc?.planExtras?.[dept]);
+  if (extras.length) content.extras = extras;
   return createHash('sha1').update(JSON.stringify(content)).digest('hex');
+}
+
+const isPlainObject = (value: unknown): value is Record<string, any> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * A department's extras as sorted [itemId, [[field, value], ...]] pairs, without empty values and without items left
+ * with none (an empty map and a map of blanks both give []).
+ */
+function normaliseExtras(extras: unknown): [string, [string, string][]][] {
+  if (!isPlainObject(extras)) return [];
+  const result: [string, [string, string][]][] = [];
+  for (const itemId of Object.keys(extras).sort()) {
+    const fields = extras[itemId];
+    if (!isPlainObject(fields)) continue;
+    const pairs = Object.keys(fields)
+      .sort()
+      .map((field): [string, string] => [field, normalise(fields[field])])
+      .filter(([, value]) => value !== '');
+    if (pairs.length) result.push([itemId, pairs]);
+  }
+  return result;
 }
 
 /** Fingerprints of all five departments. */

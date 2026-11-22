@@ -19,6 +19,9 @@ export interface IUserPermissions {
       dyeing?: boolean;
       finishing?: boolean;
       delivery?: boolean;
+      /** Delivery Plan (Floor) / (Lock) menus (US-11); the apps fall back to `delivery` when these are missing. */
+      deliveryFloor?: boolean;
+      deliveryLock?: boolean;
     };
     /** Older typing of the order plan menus; the stored key is orderManagement. Kept so nothing typed against it breaks. */
     orderPlanning?: {
