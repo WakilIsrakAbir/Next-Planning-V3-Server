@@ -51,6 +51,12 @@ export interface IOrderDetails {
 
 const DASHBOARD_DEPTS = ['yd', 'knitting', 'dyeing', 'finishing', 'delivery'];
 
+/** The Delivery Plan (Floor) and (Lock) list keys: lists of the Delivery orders, stored under 'delivery'. */
+export const DELIVERY_SPLIT_DEPTS = ['deliveryfloor', 'deliverylock'] as const;
+export type DeliverySplitDept = (typeof DELIVERY_SPLIT_DEPTS)[number];
+export const isDeliverySplit = (dept: unknown): dept is DeliverySplitDept =>
+  (DELIVERY_SPLIT_DEPTS as readonly unknown[]).includes(dept);
+
 export class OrderService {
   /**
    * Retrieves unique buyer names scoped to permitted buyers
@@ -121,7 +127,9 @@ export class OrderService {
   /**
    * Retrieves buyers present in a specific department's active upload file
    */
-  static async getDepartmentBuyers(dept: string, allowedRawBuyers?: string[]): Promise<string[]> {
+  static async getDepartmentBuyers(deptKey: string, allowedRawBuyers?: string[]): Promise<string[]> {
+    // The Delivery Floor and Lock lists are lists of the Delivery orders.
+    const dept = isDeliverySplit(deptKey) ? 'delivery' : deptKey;
     const cacheKey = `${dept}_${(allowedRawBuyers || []).sort().join(',')}`;
     const cached = OrderService.deptBuyersCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < OrderService.CACHE_TTL) {
@@ -255,7 +263,56 @@ export class OrderService {
   }
 
   /**
-   * Retrieves paginated orders for a specific department and status tab
+   * The Delivery Plan (Floor) or (Lock) status of an order, from its OrderDate (lean, or null when it has none):
+   * Completed when the Delivery Order Status is Completed; otherwise the save rule (computeSaveStatus) over the saved
+   * Delivery rows' plan types, Lock reading `planType` and Floor `floorPlanType`. No OrderDate or no rows: Pending.
+   */
+  static computeDeliverySplitStatus(planDoc: Record<string, any> | null | undefined, dept: DeliverySplitDept): PlanStatus {
+    if (!planDoc) return 'Pending';
+    if (planDoc.deliveryStatus === 'Completed') return 'Completed';
+    const rows = Array.isArray(planDoc.delivery) ? planDoc.delivery : [];
+    if (!rows.length) return 'Pending';
+    const items = dept === 'deliveryfloor' ? rows.map((row: any) => ({ planType: row?.floorPlanType })) : rows;
+    return StatusEngineService.computeSaveStatus('delivery', items) as PlanStatus;
+  }
+
+  /**
+   * One page of a Delivery Floor / Lock list: every order matching `filter` (no status condition), one projected
+   * OrderDate query for their statuses, then the status filter (none when `status` is null), count and page in
+   * memory. Each order carries `<dept>PlanStatus`.
+   */
+  private static async findDeliverySplitPage(
+    dept: DeliverySplitDept,
+    filter: Record<string, any>,
+    projection: Record<string, any>,
+    status: string | null,
+    skip: number,
+    limit: number
+  ): Promise<{ orders: any[]; total: number }> {
+    const all = (await Order.find(filter, projection).sort({ orderNo: -1 }).lean()) as any[];
+    const planDocs = all.length
+      ? await OrderDate.find(
+          { orderNo: { $in: all.map((o) => o.orderNo) } },
+          { orderNo: 1, deliveryStatus: 1, 'delivery.planType': 1, 'delivery.floorPlanType': 1 }
+        ).lean()
+      : [];
+    const byOrderNo = new Map<string, any>(planDocs.map((d: any) => [d.orderNo, d]));
+    const statusField = `${dept}PlanStatus`;
+    const matching: any[] = [];
+    for (const order of all) {
+      const planStatus = OrderService.computeDeliverySplitStatus(byOrderNo.get(order.orderNo), dept);
+      if (status !== null && planStatus !== status) continue;
+      order[statusField] = planStatus;
+      matching.push(order);
+    }
+    return { orders: matching.slice(skip, skip + limit), total: matching.length };
+  }
+
+  /**
+   * Retrieves paginated orders for a specific department and status tab.
+   * `allStatuses` (GET ?scope=all) drops the status filter, for a search across every list; each order then carries
+   * its `<dept>PlanStatus` ('Pending' when never set). 'deliveryfloor' / 'deliverylock' list the Delivery orders with
+   * a status computed from their saved Floor / Lock plan types (computeDeliverySplitStatus).
    */
   static async getDepartmentOrders(params: {
     dept?: string;
@@ -266,6 +323,7 @@ export class OrderService {
     search?: string;
     exact?: boolean;
     populateItems?: boolean;
+    allStatuses?: boolean;
     allowedRawBuyers?: string[];
   }): Promise<IPaginatedOrdersResult> {
     const {
@@ -277,10 +335,11 @@ export class OrderService {
       search = '',
       exact = false,
       populateItems = false,
+      allStatuses = false,
       allowedRawBuyers,
     } = params;
 
-    const isDefault = page === 1 && limit === 10 && !search && !buyer && !populateItems;
+    const isDefault = page === 1 && limit === 10 && !search && !buyer && !populateItems && !allStatuses;
     const defaultCacheKey = `${dept}_${status}_${(allowedRawBuyers || []).sort().join(',')}`;
     if (isDefault) {
       const cached = OrderService.deptOrdersDefaultCache.get(defaultCacheKey);
@@ -289,22 +348,28 @@ export class OrderService {
       }
     }
 
-    const pageNum = Math.max(1, page);
-    const limitNum = Math.min(100, Math.max(1, limit));
+    const pageNum = Math.max(1, Number.isFinite(page) ? page : 1);
+    const limitNum = Math.min(100, Math.max(1, Number.isFinite(limit) ? limit : 10));
     const skip = (pageNum - 1) * limitNum;
+
+    const splitDept = isDeliverySplit(dept) ? dept : null;
+    const dbDept = splitDept ? 'delivery' : dept;
 
     const filter: Record<string, any> = {};
 
     // Filter by active uploaded file for this department
-    const validOrderNos = await OrderService.getValidOrderNos(dept);
+    const validOrderNos = await OrderService.getValidOrderNos(dbDept);
     if (validOrderNos && validOrderNos.length > 0) {
       filter.orderNo = { $in: validOrderNos };
     }
 
     // Filter by plan status. "Pending" also covers orders whose status was never set
     // (field missing, null or empty string), matching the legacy backend.
+    // (Delivery Floor / Lock statuses are computed after the query; scope=all has no status filter.)
     const statusField = `${dept}PlanStatus`;
-    if (status === 'Pending') {
+    if (splitDept || allStatuses) {
+      // no status filter in the query
+    } else if (status === 'Pending') {
       filter.$or = [
         { [statusField]: 'Pending' },
         { [statusField]: { $exists: false } },
@@ -316,7 +381,7 @@ export class OrderService {
     }
 
     // Only return orders that have items for this department
-    const itemsField = `${dept}Items`;
+    const itemsField = `${dbDept}Items`;
     filter[itemsField] = { $exists: true, $ne: [] };
 
     // Filter by buyer. The buyer tabs are upper-cased, so the match ignores case (as in the legacy backend).
@@ -349,11 +414,11 @@ export class OrderService {
       bookingDate: 1,
       status: 1,
       requiredQtyKgs: 1,
-      [`${dept}PlanStatus`]: 1,
     };
+    if (!splitDept) projection[statusField] = 1;
 
     if (populateItems) {
-      projection[`${dept}Items`] = 1;
+      projection[`${dbDept}Items`] = 1;
       projection.knitStart = 1;
       projection.knitEnd = 1;
       projection.dyeStart = 1;
@@ -364,11 +429,19 @@ export class OrderService {
       projection.ydEnd = 1;
     }
 
-    const [orders, total, buyerList] = await Promise.all([
-      Order.find(filter, projection).sort({ orderNo: -1 }).skip(skip).limit(limitNum).lean(),
-      Order.countDocuments(filter),
-      OrderService.getDepartmentBuyers(dept, allowedRawBuyers),
+    const [{ orders, total }, buyerList] = await Promise.all([
+      splitDept
+        ? OrderService.findDeliverySplitPage(splitDept, filter, projection, allStatuses ? null : status, skip, limitNum)
+        : Promise.all([
+            Order.find(filter, projection).sort({ orderNo: -1 }).skip(skip).limit(limitNum).lean(),
+            Order.countDocuments(filter),
+          ]).then(([found, count]) => ({ orders: found as any[], total: count })),
+      OrderService.getDepartmentBuyers(dbDept, allowedRawBuyers),
     ]);
+
+    if (allStatuses && !splitDept) {
+      for (const order of orders) if (!order[statusField]) order[statusField] = 'Pending';
+    }
 
     const formattedBuyers = Array.from(
       new Set(

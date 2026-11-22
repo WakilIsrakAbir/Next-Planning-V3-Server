@@ -27,6 +27,13 @@ export interface IOrderDate extends Document {
   ydActual?: Record<string, any>;
   deliveryfloorActual?: Record<string, any>;
 
+  /**
+   * V3-only per-item dates, kept out of the plan rows because a V2 save rebuilds the rows from a fixed key list:
+   * `planExtras.<dept>.<itemId>.<field>` = '' or 'YYYY-MM-DD' (knitting: actualYarnDate; dyeing: ldPlanDate,
+   * actualLdDate). Absent until the first save-plans that sends `extras`.
+   */
+  planExtras?: Record<string, Record<string, Record<string, string>>>;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -58,6 +65,8 @@ const orderDateSchema = new Schema<IOrderDate>(
     deliveryActual: { type: Schema.Types.Mixed, default: null },
     ydActual: { type: Schema.Types.Mixed, default: null },
     deliveryfloorActual: { type: Schema.Types.Mixed, default: null },
+    // No default: documents without V3 extras keep V2's shape.
+    planExtras: { type: Schema.Types.Mixed },
   },
   { timestamps: true, strict: false }
 );

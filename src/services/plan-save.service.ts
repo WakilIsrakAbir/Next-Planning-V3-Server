@@ -38,6 +38,17 @@ const MAX_WRITE_ATTEMPTS = 3;
 
 const isObject = (value: unknown): boolean => value !== null && typeof value === 'object' && !Array.isArray(value);
 
+/** The V3-only per-item dates a department may send as `extras` (stored in `planExtras.<dept>`, not in its rows). */
+const EXTRA_FIELDS: Partial<Record<PlanDept, readonly string[]>> = {
+  knitting: ['actualYarnDate'],
+  dyeing: ['ldPlanDate', 'actualLdDate'],
+};
+
+const EXTRAS_PREFIX = 'planExtras.';
+
+/** A calendar date YYYY-MM-DD (month 01-12, day 01-31). */
+const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
 const planSchema = z.object({
   department: z.enum(PLAN_DEPTS),
   fabricItems: z
@@ -49,6 +60,30 @@ const planSchema = z.object({
     }),
   orderStatus: z.string().optional(),
   completedDate: z.string().optional(),
+  extras: z.record(z.string(), z.record(z.string(), z.string())).optional(),
+}).superRefine((plan, ctx) => {
+  if (plan.extras === undefined) return;
+  const allowed: readonly string[] = EXTRA_FIELDS[plan.department] || [];
+  if (!allowed.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['extras'], message: `${DEPT_LABELS[plan.department]} has no extra dates.` });
+    return;
+  }
+  for (const [itemId, fields] of Object.entries(plan.extras)) {
+    if (!itemId.trim() || itemId.startsWith('$')) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['extras', itemId], message: 'Invalid item id.' });
+      return;
+    }
+    for (const [field, value] of Object.entries(fields)) {
+      if (!allowed.includes(field)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['extras', itemId, field], message: `Unknown field (allowed: ${allowed.join(', ')}).` });
+        return;
+      }
+      if (value !== '' && !DATE_RE.test(value)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['extras', itemId, field], message: "Must be '' or YYYY-MM-DD." });
+        return;
+      }
+    }
+  }
 });
 
 const bodySchema = z.object({
@@ -133,11 +168,25 @@ function changedDepartments(
     const storedFingerprint = fingerprintDept(stored, department);
     if (storedFingerprint === expected) continue;
     if (expected === UNSAVED_FINGERPRINT && isUnsavedDept(stored, department)) continue;
-    // The department as this save would store it (the status stays as stored when none is sent).
-    if (storedFingerprint === fingerprintDept({ ...stored, ...set }, department)) continue;
+    // The department as this save would store it (the status and extras stay as stored when none are sent).
+    if (storedFingerprint === fingerprintDept(applySet(stored, set), department)) continue;
     changed.add(department);
   }
   return PLAN_DEPTS.filter((d) => changed.has(d));
+}
+
+/** The stored document with this save's $set applied, including its dotted `planExtras.<dept>` keys. */
+function applySet(stored: Record<string, any> | null, set: Record<string, unknown>): Record<string, any> {
+  const result: Record<string, any> = { ...stored };
+  for (const [key, value] of Object.entries(set)) {
+    if (key.startsWith(EXTRAS_PREFIX)) {
+      const extras = isObject(result.planExtras) ? result.planExtras : {};
+      result.planExtras = { ...extras, [key.slice(EXTRAS_PREFIX.length)]: value };
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 const isDuplicateKey = (error: any): boolean => error?.code === 11000;
@@ -162,6 +211,7 @@ async function writeWithCheck(
   for (const { department } of checked) {
     projection[department] = 1;
     projection[`${department}Status`] = 1;
+    projection[`${EXTRAS_PREFIX}${department}`] = 1;
   }
   const read = () => OrderDate.findOne({ orderNo }, projection).lean() as Promise<Record<string, any> | null>;
 
@@ -226,6 +276,8 @@ export class PlanSaveService {
     const set: Record<string, unknown> = {};
     for (const plan of plans) {
       Object.assign(set, OrderService.buildDeptSet(plan.department, plan.fabricItems, plan.orderStatus, plan.completedDate));
+      // V3 extras replace the department's whole map, in the same write as its rows; when absent they stay as stored.
+      if (plan.extras !== undefined) set[`${EXTRAS_PREFIX}${plan.department}`] = plan.extras;
     }
 
     const checked = plans.filter((plan) => base[plan.department] !== undefined);
