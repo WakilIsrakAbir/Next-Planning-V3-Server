@@ -21,10 +21,15 @@ const app = express();
  * deployments (production and previews of next-planning-v3-client), and localhost only outside production.
  * Matching is exact on the parsed origin, so look-alike hosts (e.g. evil-localhost.com, other *.vercel.app apps) fail.
  */
-const CLIENT_ORIGINS = String(env.CLIENT_URL || '')
-  .split(',')
-  .map((s) => s.trim().replace(/\/+$/, ''))
-  .filter(Boolean);
+// The client's production domains (Vercel → client project → Domains). Add a new domain here when one is added there.
+const PRODUCTION_CLIENT_ORIGINS = ['https://tps-epyllion.vercel.app', 'https://next-planning-v3-client.vercel.app'];
+const CLIENT_ORIGINS = [
+  ...PRODUCTION_CLIENT_ORIGINS,
+  ...String(env.CLIENT_URL || '')
+    .split(',')
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean),
+];
 const PROJECT_VERCEL_ORIGIN = /^https:\/\/next-planning-v3-client(-[a-z0-9-]+)?\.vercel\.app$/;
 
 export function isAllowedOrigin(origin: string): boolean {
