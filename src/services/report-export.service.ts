@@ -2,7 +2,8 @@ import * as XLSX from 'xlsx';
 import { Order } from '../models/Order.model.js';
 import { OrderDate } from '../models/OrderDate.model.js';
 import { DeptValidOrders } from '../models/DeptValidOrders.model.js';
-import { OrderService } from './order.service.js';
+import { OrderService, isDeliverySplit, type DeliverySplitDept } from './order.service.js';
+import { normalizeItemId } from '../utils/item-matching.js';
 import { normalizeItemRow, matchKey, hasValue, copyFields, fillMissingFields } from '../utils/order-items.js';
 
 export class ReportExportService {
@@ -20,19 +21,32 @@ export class ReportExportService {
    * order shows its saved plan rows, an order never planned here its uploaded items with blank
    * plan dates and Plan Type.
    *
+   * Knitting rows also carry "Yarn Date" (the row's yarnDate) and "Actual Yarn Date", Dyeing rows "LD Plan Date" and
+   * "Actual LD Date", both after "Plan Type" (the V3 extras: OrderDate.planExtras.<dept>.<itemId>, US-12).
+   *
+   * 'deliveryfloor' / 'deliverylock' (US-12) report the Delivery orders and rows with only the Floor or only the Lock
+   * plan columns. Their orders are chosen by OrderService.computeDeliverySplitStatus: Pending + Confirm + Tentative
+   * (as the Delivery report), or Pending alone with `pendingOnly`.
+   *
    * Returns null when there is nothing to export.
    */
   static async generateDepartmentReport(
-    dept: string,
+    reportDept: string,
     allowedRawBuyers?: string[],
     options: { pendingOnly?: boolean } = {}
   ): Promise<Buffer | null> {
     const pendingOnly = options.pendingOnly === true;
+    const split: DeliverySplitDept | null = isDeliverySplit(reportDept) ? reportDept : null;
+    // The stored department (Floor / Lock live in the Delivery plan rows)
+    const dept = split ? 'delivery' : reportDept;
     const statusField = `${dept}PlanStatus`;
     const itemsField = `${dept}Items`;
 
     let filter: Record<string, any>;
-    if (pendingOnly) {
+    if (split) {
+      // Floor / Lock statuses are computed from the saved rows below; here only the Delivery orders with items
+      filter = { [itemsField]: { $exists: true, $ne: [] } };
+    } else if (pendingOnly) {
       // Same orders as the Pending list tab: status Pending or never set, with items for this department
       filter = {
         $or: [
@@ -63,12 +77,23 @@ export class ReportExportService {
     }
 
     // 1. Minimal order info
-    const orders: any[] = await Order.find(filter, {
+    let orders: any[] = await Order.find(filter, {
       orderNo: 1,
       buyer: 1,
       'T&A Knitting Start': 1,
       'T&A Knitting End': 1,
     }).lean();
+    if (split && orders.length > 0) {
+      const wanted = pendingOnly ? ['Pending'] : ['Pending', 'Confirm', 'Tentative'];
+      const statusDocs: any[] = await OrderDate.find(
+        { orderNo: { $in: orders.map((o) => o.orderNo) } },
+        { orderNo: 1, deliveryStatus: 1, 'delivery.planType': 1, 'delivery.floorPlanType': 1 }
+      ).lean();
+      const byOrderNo = new Map<string, any>(statusDocs.map((d) => [d.orderNo, d]));
+      orders = orders.filter((o) =>
+        wanted.includes(OrderService.computeDeliverySplitStatus(byOrderNo.get(o.orderNo), split))
+      );
+    }
     const orderNos: string[] = orders.map((o) => o.orderNo);
 
     if (orderNos.length === 0) {
@@ -92,6 +117,7 @@ export class ReportExportService {
     } else if (dept === 'yd') {
       planProjection.knitting = 1;
     }
+    if (dept === 'knitting' || dept === 'dyeing') planProjection[`planExtras.${dept}`] = 1;
 
     const syncLatest = dept === 'knitting' || dept === 'dyeing' || dept === 'delivery';
     const orderItemProjection: Record<string, any> = { orderNo: 1 };
@@ -295,18 +321,18 @@ export class ReportExportService {
             row['Dyeing Start Date'] = dyeStart;
             row['Dyeing End Date'] = dyeEnd;
             row['Dyeing Plan Type'] = dyeType;
-            row['Delivery Plan Start'] = item.startDate || '';
-            row['Delivery Plan End'] = item.endDate || '';
-            row['Delivery Plan Type'] = item.planType || '';
-            row['Delivery Plan Start (Floor)'] = item.floorStartDate || '';
-            row['Delivery Plan End (Floor)'] = item.floorEndDate || '';
-            row['Delivery Plan Type (Floor)'] = item.floorPlanType || '';
-            row['Limitation'] = item.limitation || '';
-            row['Remarks'] = item.remarks || '';
+            ReportExportService.setDeliveryPlanColumns(row, item, split);
           } else {
             row['Plan Start Date'] = item.startDate || '';
             row['Plan End Date'] = item.endDate || '';
             row['Plan Type'] = item.planType || '';
+            if (dept === 'knitting') {
+              row['Yarn Date'] = item.yarnDate || '';
+              row['Actual Yarn Date'] = ReportExportService.extraValue(plan, dept, item, 'actualYarnDate');
+            } else if (dept === 'dyeing') {
+              row['LD Plan Date'] = ReportExportService.extraValue(plan, dept, item, 'ldPlanDate');
+              row['Actual LD Date'] = ReportExportService.extraValue(plan, dept, item, 'actualLdDate');
+            }
             if (dept === 'yd') {
               row['Yarn Ok Date'] = item.yarnOkDate || '';
               row['Matching Option Date'] = item.matchingOptionDate || '';
@@ -390,14 +416,7 @@ export class ReportExportService {
             row['Dyeing Start Date'] = dyeStart;
             row['Dyeing End Date'] = dyeEnd;
             row['Dyeing Plan Type'] = dyeType;
-            row['Delivery Plan Start'] = '';
-            row['Delivery Plan End'] = '';
-            row['Delivery Plan Type'] = '';
-            row['Delivery Plan Start (Floor)'] = '';
-            row['Delivery Plan End (Floor)'] = '';
-            row['Delivery Plan Type (Floor)'] = '';
-            row['Limitation'] = '';
-            row['Remarks'] = '';
+            ReportExportService.setDeliveryPlanColumns(row, {}, split);
             allRows.push(row);
           });
         });
@@ -453,9 +472,39 @@ export class ReportExportService {
       }
     }
 
-    XLSX.utils.book_append_sheet(wb, ws, pendingOnly ? `${dept}_Pending` : `${dept}_Report`);
+    XLSX.utils.book_append_sheet(wb, ws, pendingOnly ? `${reportDept}_Pending` : `${reportDept}_Report`);
 
     return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  }
+
+  /**
+   * The Delivery plan columns of a report row: Lock (startDate / endDate / planType, Limitation, Remarks), Floor
+   * (floorStartDate / floorEndDate / floorPlanType), or both for the combined Delivery report (unchanged order).
+   */
+  private static setDeliveryPlanColumns(row: Record<string, any>, item: any, split: DeliverySplitDept | null): void {
+    if (split !== 'deliveryfloor') {
+      row['Delivery Plan Start'] = item.startDate || '';
+      row['Delivery Plan End'] = item.endDate || '';
+      row['Delivery Plan Type'] = item.planType || '';
+    }
+    if (split !== 'deliverylock') {
+      row['Delivery Plan Start (Floor)'] = item.floorStartDate || '';
+      row['Delivery Plan End (Floor)'] = item.floorEndDate || '';
+      row['Delivery Plan Type (Floor)'] = item.floorPlanType || '';
+    }
+    if (split !== 'deliveryfloor') {
+      row['Limitation'] = item.limitation || '';
+      row['Remarks'] = item.remarks || '';
+    }
+  }
+
+  /** A V3 extra date of a saved plan row: planExtras.<dept>.<itemId>.<field> (exact itemId, then normalized), or ''. */
+  private static extraValue(plan: any, dept: string, item: any, field: string): string {
+    const map = plan?.planExtras?.[dept];
+    if (!map || typeof map !== 'object' || item?.itemId === undefined || item?.itemId === null) return '';
+    const entry = map[String(item.itemId)] ?? map[normalizeItemId(item.itemId)];
+    const value = entry && typeof entry === 'object' ? entry[field] : undefined;
+    return typeof value === 'string' ? value : '';
   }
 
   /**

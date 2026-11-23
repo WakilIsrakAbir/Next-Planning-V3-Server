@@ -210,13 +210,16 @@ export class OrderService {
   }
 
   /**
-   * Retrieves all orders across departments (used by Order Status and PPI overview)
+   * Retrieves all orders across departments (used by Order Status and PPI overview).
+   * `search` matches the order no. or buyer; `style` (US-12, PPI) matches the General Info Style, both
+   * case-insensitive "contains", and both must match when both are given. Each order carries `style`.
    */
   static async getAllOrdersList(
     page: number = 1,
     limit: number = 10,
     search: string = '',
-    allowedRawBuyers?: string[]
+    allowedRawBuyers?: string[],
+    style: string = ''
   ): Promise<IPaginatedOrdersResult> {
     const pageNum = Math.max(1, page);
     const limitNum = Math.min(200, Math.max(1, limit));
@@ -235,11 +238,15 @@ export class OrderService {
         { buyer: { $regex: safeSearch, $options: 'i' } },
       ];
     }
+    if (style && style.trim()) {
+      filter.style = { $regex: escapeRegex(style.trim()), $options: 'i' };
+    }
 
     const projection = {
       orderNo: 1,
       buyer: 1,
       bookingDate: 1,
+      style: 1,
       status: 1,
       knittingPlanStatus: 1,
       dyeingPlanStatus: 1,
@@ -1277,9 +1284,11 @@ export class OrderService {
     includePending: boolean = false,
     pendingOnly: boolean = false
   ): Promise<{ orders: any[]; planMap: Record<string, any>; total: number }> {
-    const actualDept = dept === 'deliveryfloor' ? 'delivery' : dept;
+    // Delivery Plan (Floor) / (Lock) reports (US-12): the Delivery orders, with the computed Floor / Lock status
+    const split = isDeliverySplit(dept) ? dept : null;
+    const actualDept = split ? 'delivery' : dept;
     const mode = pendingOnly ? 'pendingOnly' : includePending ? 'withPending' : 'planned';
-    const cacheKey = `${actualDept}_${mode}_${(allowedRawBuyers || [])
+    const cacheKey = `${split || actualDept}_${mode}_${(allowedRawBuyers || [])
       .slice()
       .sort()
       .join(',')}`;
@@ -1321,6 +1330,9 @@ export class OrderService {
       [itemsField]: { $exists: true, $ne: [] },
     };
 
+    // Floor / Lock: no stored status; it is computed from the saved Delivery rows below
+    if (split) delete filter.$or;
+
     const validOrderNos = await OrderService.getValidOrderNos(actualDept);
     if (validOrderNos && validOrderNos.length > 0) {
       filter.orderNo = { $in: validOrderNos };
@@ -1358,19 +1370,34 @@ export class OrderService {
       projection.knittingItems = 1;
     }
 
-    const orders = await Order.find(filter, projection).sort({ orderNo: -1 }).lean();
+    let orders: any[] = await Order.find(filter, projection).sort({ orderNo: -1 }).lean();
     const orderNos = orders.map((o) => o.orderNo);
 
-    // Only project the requested department's items from OrderDate
-    const planDocs = await OrderDate.find(
-      { orderNo: { $in: orderNos } },
-      { orderNo: 1, [actualDept]: 1 }
-    ).lean();
+    // Only project the requested department's items from OrderDate (and its V3 extras: Knitting / Dyeing)
+    const planProjection: Record<string, any> = { orderNo: 1, [actualDept]: 1 };
+    if (actualDept === 'knitting' || actualDept === 'dyeing') planProjection[`planExtras.${actualDept}`] = 1;
+    if (split) planProjection.deliveryStatus = 1;
+    const planDocs = await OrderDate.find({ orderNo: { $in: orderNos } }, planProjection).lean();
 
     const planMap: Record<string, any> = {};
     planDocs.forEach((p: any) => {
       planMap[p.orderNo] = p;
     });
+
+    if (split) {
+      // Floor / Lock: Pending + Confirm + Tentative (as Delivery), or Pending alone; each order carries <split>PlanStatus
+      const wanted = pendingOnly ? ['Pending'] : ['Pending', 'Confirm', 'Tentative'];
+      const splitStatusField = `${split}PlanStatus`;
+      orders = orders.filter((order) => {
+        const planStatus = OrderService.computeDeliverySplitStatus(planMap[order.orderNo], split);
+        order[splitStatusField] = planStatus;
+        return wanted.includes(planStatus);
+      });
+      const kept = new Set(orders.map((o) => o.orderNo));
+      Object.keys(planMap).forEach((no) => {
+        if (!kept.has(no)) delete planMap[no];
+      });
+    }
 
     const result = {
       orders,

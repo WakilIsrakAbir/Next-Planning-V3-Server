@@ -7,7 +7,7 @@ import { PlanStatus } from '../models/Order.model.js';
 import { HttpError } from '../utils/http-error.js';
 
 // Departments with an Updated / Pending report download
-const REPORT_DEPTS = ['yd', 'knitting', 'dyeing', 'finishing', 'delivery'];
+const REPORT_DEPTS = ['yd', 'knitting', 'dyeing', 'finishing', 'delivery', 'deliveryfloor', 'deliverylock'];
 
 export class OrderController {
   static async getBuyers(req: Request, res: Response): Promise<void> {
@@ -40,12 +40,13 @@ export class OrderController {
 
   static async getAllList(req: Request, res: Response): Promise<void> {
     try {
-      const { page = 1, limit = 10, search = '' } = req.query;
+      const { page = 1, limit = 10, search = '', style = '' } = req.query;
       const result = await OrderService.getAllOrdersList(
         parseInt(String(page), 10),
         parseInt(String(limit), 10),
         String(search),
-        req.allowedRawBuyers
+        req.allowedRawBuyers,
+        String(style)
       );
       res.status(200).json(result);
     } catch (err: any) {
