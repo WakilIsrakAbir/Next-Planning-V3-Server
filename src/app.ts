@@ -16,7 +16,35 @@ import { apiLimiter } from './middleware/rate-limit.middleware.js';
 
 const app = express();
 
+/**
+ * Browser origins allowed to call the API: CLIENT_URL (comma-separated list allowed), this project's own Vercel
+ * deployments (production and previews of next-planning-v3-client), and localhost only outside production.
+ * Matching is exact on the parsed origin, so look-alike hosts (e.g. evil-localhost.com, other *.vercel.app apps) fail.
+ */
+const CLIENT_ORIGINS = String(env.CLIENT_URL || '')
+  .split(',')
+  .map((s) => s.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+const PROJECT_VERCEL_ORIGIN = /^https:\/\/next-planning-v3-client(-[a-z0-9-]+)?\.vercel\.app$/;
+
+export function isAllowedOrigin(origin: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  const normalized = url.origin;
+  if (CLIENT_ORIGINS.includes(normalized)) return true;
+  if (PROJECT_VERCEL_ORIGIN.test(normalized)) return true;
+  if (env.NODE_ENV !== 'production' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) return true;
+  return false;
+}
+
 // Global Middlewares
+// Vercel sits in front of the app: trust its proxy so rate limits see the real client IP.
+app.set('trust proxy', 1);
+
 app.use(helmet());
 app.use(compression());
 app.use(
@@ -24,14 +52,7 @@ app.use(
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps, curl, or server-to-server)
       if (!origin) return callback(null, true);
-      if (
-        origin === env.CLIENT_URL ||
-        origin.endsWith('.vercel.app') ||
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1')
-      ) {
-        return callback(null, true);
-      }
+      if (isAllowedOrigin(origin)) return callback(null, true);
       return callback(new Error('Blocked by CORS policy: Origin not allowed.'));
     },
     credentials: true,

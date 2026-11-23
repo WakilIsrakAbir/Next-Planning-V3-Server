@@ -17,22 +17,26 @@ export interface ILoginResult {
 
 export class AuthService {
   static async login(username: string, password: string): Promise<ILoginResult> {
-    if (!username || !password) {
+    // Only plain strings: an object such as {"$ne": null} must never reach the query (NoSQL operator injection).
+    if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password) {
       throw new Error('Username and password are required.');
     }
 
-    const user = await User.findOne({ username }).select('+password');
+    // One message for an unknown user and a wrong password, so usernames cannot be probed.
+    const INVALID = 'Invalid username or password.';
+    const user = await User.findOne({ username: username.trim() }).select('+password');
     if (!user) {
-      throw new Error('Invalid credentials. User not found.');
-    }
-
-    if (user.status === 'inactive') {
-      throw new Error('Your account is deactivated. Please contact your administrator.');
+      throw new Error(INVALID);
     }
 
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
-      throw new Error('Invalid credentials. Password incorrect.');
+      throw new Error(INVALID);
+    }
+
+    // Told only to someone who knows the password.
+    if (user.status === 'inactive') {
+      throw new Error('Your account is deactivated. Please contact your administrator.');
     }
 
     const { seconds: expiresInSeconds, expiresAt: sessionExpiresAt } = getSecondsUntilDhakaMidnight();
@@ -136,14 +140,24 @@ export class AuthService {
     await User.findByIdAndUpdate(userId, { lastActive: new Date() });
   }
 
-  /** Creates the default Super Admin (admin / admin123) when no user named "admin" exists. Runs at startup. */
+  /**
+   * First-run bootstrap only: when the database has NO Admin at all, creates user "admin" with the password from
+   * DEFAULT_ADMIN_PASSWORD (at least 10 characters). Without that variable nothing is created. There is no
+   * built-in password, so a known default can never open a live system.
+   */
   static async ensureDefaultAdmin(): Promise<void> {
     try {
-      const existingAdmin = await User.findOne({ username: 'admin' });
+      const anyAdmin = await User.exists({ role: 'Admin' });
+      const bootstrapPassword = process.env.DEFAULT_ADMIN_PASSWORD || '';
+      if (!anyAdmin && bootstrapPassword.length < 10) {
+        console.warn('⚠️ No Admin user exists. Set DEFAULT_ADMIN_PASSWORD (10+ characters) once to create user "admin".');
+        return;
+      }
+      const existingAdmin = anyAdmin ? true : await User.findOne({ username: 'admin' });
       if (!existingAdmin) {
         const defaultAdmin = new User({
           username: 'admin',
-          password: 'admin123',
+          password: bootstrapPassword,
           role: 'Admin',
           status: 'active',
           permissions: {
@@ -151,9 +165,9 @@ export class AuthService {
           },
         });
         await defaultAdmin.save();
-        console.log('✅ Default Super Admin initialized: username "admin", password "admin123"');
+        console.log('✅ Bootstrap Admin "admin" created from DEFAULT_ADMIN_PASSWORD. Change the password after the first login.');
       } else {
-        console.log('ℹ️ Admin user "admin" already exists.');
+        console.log('ℹ️ An Admin user already exists; no bootstrap needed.');
       }
     } catch (err: any) {
       console.error('Error seeding default admin:', err.message);
