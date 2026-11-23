@@ -40,6 +40,15 @@ export function requirePlanCheckListPermission(req: Request, res: Response, next
   res.status(403).json({ code: 'PERMISSION', message: 'Access forbidden: Plan Check List permission required.' });
 }
 
+/** Uploading or deleting source files: Admin, or the Source File Upload menu (menus.dataManagement.view). */
+export function requireUploadPermission(req: Request, res: Response, next: NextFunction): void {
+  if (req.user && (req.user.role === 'Admin' || req.user.permissions?.menus?.dataManagement?.view === true)) {
+    next();
+    return;
+  }
+  res.status(403).json({ message: 'Access denied: you do not have permission to upload or delete source files.', code: 'PERMISSION' });
+}
+
 export function requireSetupPermission(req: Request, res: Response, next: NextFunction): void {
   if (req.user && (req.user.role === 'Admin' || req.user.permissions?.menus?.dataManagement?.setup)) {
     next();

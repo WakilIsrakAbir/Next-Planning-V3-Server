@@ -4,7 +4,7 @@ import os from 'os';
 import { UploadController } from '../controllers/upload.controller.js';
 import { OrderController } from '../controllers/order.controller.js';
 import { authenticateToken } from '../middleware/auth.middleware.js';
-import { requireAdmin } from '../middleware/role.middleware.js';
+import { requireAdmin, requireUploadPermission } from '../middleware/role.middleware.js';
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -15,19 +15,27 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage });
+// Only Excel workbooks, at most 50 MB.
+const upload = multer({
+  storage,
+  limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    if (/\.(xlsx|xls)$/i.test(file.originalname)) cb(null, true);
+    else cb(Object.assign(new Error('Only Excel files (.xlsx, .xls) can be uploaded.'), { statusCode: 400 }));
+  },
+});
 
 const router = Router();
 
 router.use(authenticateToken);
 
 // File management
-router.post('/upload', upload.single('document'), UploadController.uploadFile);
+router.post('/upload', requireUploadPermission, upload.single('document'), UploadController.uploadFile);
 router.get('/all', UploadController.getAllFiles);
 router.get('/download/:filename', UploadController.downloadFile);
 // The "clear-all-planning" total wipe was removed on 16 Nov 2026: it deleted every saved plan in the
 // database V3 shares with the old app, with no way back. A full restore is done from a backup instead.
-router.delete('/:id', UploadController.deleteFile);
+router.delete('/:id', requireUploadPermission, UploadController.deleteFile);
 
 // Planning date and migration endpoints
 router.post('/save-dates', OrderController.saveDates);
