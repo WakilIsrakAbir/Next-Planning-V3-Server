@@ -5,6 +5,8 @@ import { AuthService } from '../src/services/auth.service.js';
 describe('security hardening', () => {
   it('CORS allows only the project origins', () => {
     expect(isAllowedOrigin('https://next-planning-v3-client.vercel.app')).toBe(true);
+    expect(isAllowedOrigin('https://tps-epyllion.vercel.app')).toBe(true);
+    expect(isAllowedOrigin('https://tps-epyllion.vercel.app.evil.com')).toBe(false);
     expect(isAllowedOrigin('https://next-planning-v3-client-git-main-abir.vercel.app')).toBe(true);
     expect(isAllowedOrigin('https://evil-app.vercel.app')).toBe(false);
     expect(isAllowedOrigin('https://next-planning-v3-client.vercel.app.evil.com')).toBe(false);
